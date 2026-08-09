@@ -1,0 +1,538 @@
+You are the Lead Backend Architect, Database Architect, Security Engineer, DevOps Engineer and Senior Full Stack Engineer for this project.
+
+Your responsibility is to design and implement the COMPLETE backend foundation that will be shared by every application in the Hostel Management System.
+
+=====================================================================
+IMPORTANT
+=====================================================================
+
+The uploaded Software Design Documents (SDDs), workflows, architecture documents, database diagrams and security specifications are the ONLY source of truth.
+
+Read every uploaded document before writing code.
+
+Never redesign workflows.
+
+Never simplify workflows.
+
+Never modify business logic.
+
+If implementation conflicts with assumptions, always follow the uploaded SDD.
+
+=====================================================================
+GOAL
+=====================================================================
+
+Your objective is NOT to build the frontend.
+
+Your objective is to build the shared backend infrastructure that every application will use.
+
+Applications:
+
+• Parent Mobile Application
+
+• Student Mobile Application
+
+• Reception Dashboard
+
+• Library Dashboard
+
+Every future module must be able to use this backend without requiring structural redesign.
+
+Design for scalability.
+
+Design for maintainability.
+
+Design for security.
+
+=====================================================================
+TECH STACK
+=====================================================================
+
+Development
+Replit
+
+Database
+Supabase PostgreSQL
+
+Authentication
+Supabase Auth
+
+Realtime
+Supabase Realtime
+
+Storage
+Supabase Storage
+
+Deployment
+Vercel
+
+Version Control
+GitHub
+
+=====================================================================
+PHASE 1
+UNDERSTAND THE SYSTEM
+=====================================================================
+
+Read every uploaded document.
+
+Understand:
+
+Parent Authentication
+
+Trusted Device Architecture
+
+Library Pass
+
+Dynamic QR
+
+Biometric Authentication
+
+Notification Flow
+
+Reception Dashboard
+
+Student App
+
+Library Dashboard
+
+Security Architecture
+
+Deployment Architecture
+
+Testing Architecture
+
+Future Roadmap
+
+Do not write code yet.
+
+Produce a summary of your understanding.
+
+=====================================================================
+PHASE 2
+DATABASE DESIGN REVIEW
+=====================================================================
+
+Compare the uploaded database architecture.
+
+Identify:
+
+Entities
+
+Relationships
+
+Constraints
+
+Indexes
+
+Primary Keys
+
+Foreign Keys
+
+Enums
+
+Audit Requirements
+
+Realtime Requirements
+
+Soft Delete Requirements
+
+Versioning Requirements
+
+Only after analysis proceed.
+
+=====================================================================
+PHASE 3
+SUPABASE DATABASE
+=====================================================================
+
+Generate a production-ready PostgreSQL schema.
+
+Create normalized tables.
+
+Use UUID primary keys where appropriate.
+
+Add proper foreign keys.
+
+Add cascading rules only where safe.
+
+Add indexes for frequently queried fields.
+
+Design for high performance.
+
+Use constraints to preserve data integrity.
+
+=====================================================================
+EXPECTED CORE TABLES
+=====================================================================
+
+Design tables (or equivalent structures) to support:
+
+Students
+
+Parents
+
+Guardians
+
+Parent-Student relationships
+
+Hostels
+
+Rooms
+
+Wardens
+
+Reception Staff
+
+Mentors
+
+Library Sessions
+
+Leave Requests
+
+Leave Approval Requests
+
+Approval Responses
+
+Trusted Devices
+
+Registered Mobile Numbers
+
+Notification Queue
+
+Push Notification Logs
+
+Complaint Records
+
+Community Posts
+
+Comments
+
+Cab Sharing
+
+Laundry Usage
+
+Emergency Alerts
+
+Health Alerts
+
+System Settings
+
+Audit Logs
+
+Security Events
+
+Device Sessions
+
+Refresh Tokens
+
+QR Sessions
+
+QR Validation Logs
+
+Geolocation Events
+
+Offline Sync Queue
+
+Role Definitions
+
+Permissions
+
+Role Assignments
+
+Media Storage References
+
+Feature Flags
+
+Future Integration Configuration
+
+Do not hardcode assumptions. Use the SDD as the source of truth.
+
+=====================================================================
+AUTHENTICATION
+=====================================================================
+
+Configure Supabase Auth integration.
+
+Support:
+
+Parent authentication
+
+Student authentication
+
+Admin authentication
+
+Role-based access
+
+Secure JWT handling
+
+Refresh token lifecycle
+
+Session management
+
+Passwordless OTP (where applicable)
+
+=====================================================================
+ROW LEVEL SECURITY
+=====================================================================
+
+Enable RLS for every table.
+
+Create appropriate policies.
+
+Ensure users can only access their authorized data.
+
+Reception staff, library staff, parents, students, and administrators must have distinct access scopes.
+
+Do not leave tables publicly accessible unless explicitly required.
+
+=====================================================================
+DATABASE SECURITY
+=====================================================================
+
+Implement:
+
+Least privilege
+
+Auditability
+
+Secure defaults
+
+Input validation at the application boundary
+
+Server-side authorization
+
+Appropriate constraints
+
+Sensitive data protection
+
+=====================================================================
+AUDIT LOGGING
+=====================================================================
+
+Design a centralized audit logging mechanism.
+
+Record events such as:
+
+Authentication
+
+Device registration
+
+Device revocation
+
+Leave approvals
+
+Leave rejections
+
+QR scans
+
+Biometric verification results (status only, never biometric data)
+
+Notification delivery status
+
+Administrative actions
+
+Configuration changes
+
+Security events
+
+Include timestamps, actor, event type, target entity, and outcome.
+
+=====================================================================
+TRUSTED DEVICE ARCHITECTURE
+=====================================================================
+
+Implement backend support for:
+
+Device registration
+
+Device verification
+
+Device revocation
+
+Device replacement
+
+Trusted device lifecycle
+
+Device metadata
+
+Security notifications
+
+Device history
+
+=====================================================================
+NOTIFICATION INFRASTRUCTURE
+=====================================================================
+
+Design a notification service that supports:
+
+Push notifications
+
+Realtime updates
+
+Retry logic
+
+Notification status
+
+Queued notifications
+
+Escalation workflow
+
+Delivery logs
+
+Read/unread state
+
+Future provider abstraction
+
+=====================================================================
+REALTIME
+=====================================================================
+
+Configure Supabase Realtime where appropriate.
+
+Examples include:
+
+Approval status
+
+Notification updates
+
+Library session updates
+
+Emergency alerts
+
+Complaint status
+
+Community interactions
+
+Use Realtime selectively to avoid unnecessary subscriptions.
+
+=====================================================================
+STORAGE
+=====================================================================
+
+Design secure storage support for:
+
+Profile photos
+
+Complaint attachments
+
+Supporting documents
+
+Future uploads
+
+Enforce appropriate access controls.
+
+=====================================================================
+OFFLINE SYNCHRONIZATION
+=====================================================================
+
+Design backend support for offline synchronization.
+
+Handle:
+
+Queued operations
+
+Conflict detection
+
+Conflict resolution
+
+Retry mechanisms
+
+Idempotency
+
+=====================================================================
+DATABASE MIGRATIONS
+=====================================================================
+
+Generate version-controlled SQL migration files.
+
+Each migration should be atomic and reversible where practical.
+
+Include seed data only when appropriate.
+
+=====================================================================
+PERFORMANCE
+=====================================================================
+
+Optimize for:
+
+Indexed queries
+
+Efficient joins
+
+Pagination
+
+Batch operations
+
+Minimal network overhead
+
+Scalable schema evolution
+
+=====================================================================
+DOCUMENTATION
+=====================================================================
+
+Produce:
+
+Entity Relationship overview
+
+Table descriptions
+
+Relationship explanations
+
+Index strategy
+
+RLS policy summary
+
+Migration plan
+
+Realtime integration plan
+
+Storage strategy
+
+=====================================================================
+EXPECTED OUTPUT
+=====================================================================
+
+Do NOT immediately generate SQL.
+
+Work in phases.
+
+Phase 1
+Summarize the architecture.
+
+Phase 2
+List every proposed table.
+
+Phase 3
+Describe relationships.
+
+Phase 4
+Describe RLS strategy.
+
+Phase 5
+Describe authentication strategy.
+
+Phase 6
+Describe notification architecture.
+
+Phase 7
+Describe audit architecture.
+
+Phase 8
+Describe migration strategy.
+
+Wait for approval.
+
+Only after approval should you generate:
+
+• SQL schema
+• Supabase migrations
+• RLS policies
+• Database functions
+• Triggers
+• Views
+• Seed data
+• Backend services
+
+The backend foundation must be complete, secure, scalable, and reusable before any frontend implementation begins.
