@@ -1,0 +1,319 @@
+openapi: 3.1.0
+info:
+  title: DigiHostel API
+  version: 0.1.0
+  description: >
+    Source contract for the DigiHostel API (ADR-007). Health check plus the
+    first two real business workflows, Parent Leave Approval and Student Leave
+    Request creation/viewing (docs/leave-approval-workflow.md).
+servers:
+  - url: /api/v1
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Infrastructure health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /leave-requests:
+    post:
+      operationId: createLeaveRequest
+      tags: [leave]
+      summary: Create a leave request (authenticated student, for themselves only)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLeaveRequestBody"
+      responses:
+        "201":
+          description: Created — the new leave request in its initial (pending) state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      operationId: listLeaveRequests
+      tags: [leave]
+      summary: List the authenticated student's own leave requests
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The authenticated student's own leave requests, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LeaveRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /leave-requests/{leaveRequestId}:
+    get:
+      operationId: getLeaveRequest
+      tags: [leave]
+      summary: >
+        Get a leave request — authenticated owning student, or authenticated
+        parent/guardian (relationship-checked)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LeaveRequestId"
+      responses:
+        "200":
+          description: The leave request, if the caller is authorized to see it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaveRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /leave-requests/{leaveRequestId}/approve:
+    post:
+      operationId: approveLeaveRequest
+      tags: [leave]
+      summary: Approve a leave request
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LeaveRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeaveDecisionRequest"
+      responses:
+        "200":
+          description: Approved — the leave request's authoritative new state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /leave-requests/{leaveRequestId}/reject:
+    post:
+      operationId: rejectLeaveRequest
+      tags: [leave]
+      summary: Reject a leave request
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LeaveRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeaveDecisionRequest"
+      responses:
+        "200":
+          description: Rejected — the leave request's authoritative new state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase Auth-issued JWT (ADR-014).
+
+  parameters:
+    LeaveRequestId:
+      name: leaveRequestId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    LeaveRequestStatus:
+      type: string
+      description: >
+        Full state vocabulary already defined by the schema
+        (packages/db/src/schema/enums.ts, leave_request_status) — this
+        endpoint set only ever produces approved/rejected transitions today;
+        the escalation-notification states are included because they are
+        part of the same enum, not because this task creates them.
+      enum:
+        - pending
+        - father_notified
+        - mother_notified
+        - guardian_notified
+        - approved
+        - rejected
+        - in_app_call
+        - manual_verification
+        - expired
+
+    LeaveRequest:
+      type: object
+      required: [id, studentId, reason, startDate, endDate, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        status:
+          $ref: "#/components/schemas/LeaveRequestStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateLeaveRequestBody:
+      type: object
+      description: >
+        Student-supplied leave request fields only — never a student id (the
+        authenticated caller's own student profile is always used, resolved
+        server-side; docs/leave-approval-workflow.md's Critical Rule).
+      required: [reason, startDate, endDate]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+
+    BiometricAssertion:
+      type: object
+      description: >
+        Client-side biometric confirmation assertion (docs/auth-database-security-model.md
+        §7) — never raw biometric data. Required before any approve/reject
+        decision (SDD Ch.5 §5.2).
+      required: [assertionToken, actionId]
+      additionalProperties: false
+      properties:
+        assertionToken:
+          type: string
+        actionId:
+          type: string
+
+    LeaveDecisionRequest:
+      type: object
+      required: [biometricAssertion]
+      additionalProperties: false
+      properties:
+        biometricAssertion:
+          $ref: "#/components/schemas/BiometricAssertion"
+
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            currentStatus:
+              $ref: "#/components/schemas/LeaveRequestStatus"
+
+  responses:
+    Unauthenticated:
+      description: Missing, malformed, or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Forbidden:
+      description: Authenticated but not authorized for this action
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    NotFound:
+      description: >
+        Leave request does not exist, or exists but the caller has no
+        relationship to its student (deliberately indistinguishable —
+        anti-enumeration).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Conflict:
+      description: Leave request is not in a state that admits this decision
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    ValidationError:
+      description: Request body/params failed validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"

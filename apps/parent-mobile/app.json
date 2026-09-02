@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "DigiHostel Parent",
+    "slug": "digihostel-parent",
+    "version": "0.0.0",
+    "scheme": "digihostel-parent",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": false },
+    "android": {},
+    "plugins": ["expo-router"]
+  }
+}

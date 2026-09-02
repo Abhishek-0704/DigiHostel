@@ -1,19 +1,24 @@
 {
-  "name": "workspace",
+  "name": "digihostel",
   "version": "0.0.0",
-  "license": "MIT",
-  "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
-    "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
-  },
   "private": true,
-  "dependencies": {
-    "@replit/connectors-sdk": "^0.4.1"
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "preinstall": "sh -c 'case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "build:libs": "pnpm --filter @digihostel/db run build",
+    "build": "pnpm run typecheck && pnpm -r --if-present run build && pnpm --filter @digihostel/api run verify:runtime-resolution",
+    "typecheck": "pnpm run build:libs && pnpm -r --if-present run typecheck",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "test": "vitest run"
   },
   "devDependencies": {
+    "typescript": "^5.9.3",
     "prettier": "^3.9.6",
-    "typescript": "~5.9.3"
+    "eslint": "^9.18.0",
+    "@eslint/js": "^9.18.0",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^3.0.0"
   }
 }

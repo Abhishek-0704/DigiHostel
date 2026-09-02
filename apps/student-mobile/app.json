@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "DigiHostel Student",
+    "slug": "digihostel-student",
+    "version": "0.0.0",
+    "scheme": "digihostel-student",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": false },
+    "android": {},
+    "plugins": ["expo-router"]
+  }
+}

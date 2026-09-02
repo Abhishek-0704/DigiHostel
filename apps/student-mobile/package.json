@@ -1,0 +1,22 @@
+{
+  "name": "@digihostel/student-mobile",
+  "version": "0.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "expo": "^54.0.0",
+    "expo-router": "^6.0.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "^0.82.0",
+    "@digihostel/api-client-react": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "typescript": "^5.9.3"
+  }
+}
