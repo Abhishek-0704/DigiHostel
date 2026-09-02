@@ -37,6 +37,23 @@ Verification/evidence: see `docs/adr/ADR-014-supabase-auth.md`'s full supersessi
 
 ---
 
+## ADR-020 — OTP Delivery/Verification Mechanism for Parent Authentication
+
+Date: 2026-09-03
+Status: ACCEPTED (mechanism only — SMS-provider selection explicitly left open)
+
+Context: ADR-014 canonicalized Supabase Auth for identity/session issuance but explicitly left open *how* the OTP step in the parent registration flow (SDD Ch.4 §4.2) is delivered/verified — Supabase's own native phone-OTP flow, or a fully custom Fastify-owned OTP system. Flagged as G-19 in the Prompt 0.6 backend audit as a blocker for designing the Parent app's Login/OTP screen.
+
+Decision: Supabase Auth's native phone-OTP flow (`signInWithOtp`/`verifyOtp`) is the OTP mechanism. Fastify never generates, stores, or verifies OTP codes itself. A roll-number-to-parent-record pre-check (new, small, not yet built) must run before the OTP is triggered, so SMS is only ever sent to an already-registered parent's phone number.
+
+Alternatives considered: a fully custom Fastify-owned OTP system (rejected — reimplements a solved problem Supabase Auth already provides, adds a new secret-handling surface for no capability gain); deferring the decision (rejected — it follows directly from already-accepted architecture).
+
+Consequences: the Parent/Student mobile apps' Login/OTP screens are built against the Supabase client SDK directly, not a custom Fastify OTP endpoint; a new Fastify pre-check endpoint is still required (business-authorization concern, not an OTP-mechanism one). Production SMS-provider selection (Twilio/MessageBird/Vonage/an India-specific aggregator) and its cost remain an explicitly open, tracked pre-production decision — not a pre-development blocker, since local Supabase tooling already supports building/testing the flow end-to-end without one.
+
+Verification/evidence: see `docs/adr/ADR-020-otp-delivery-mechanism.md` for the full options analysis and the explicitly-flagged open question.
+
+---
+
 Initial known decisions:
 - Use pnpm as the workspace package manager.
 - Keep Supabase architecture.

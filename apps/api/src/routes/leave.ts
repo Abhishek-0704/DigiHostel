@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   requireActiveTrustedDevice,
   requireParentOrGuardian,
+  requireStaffRole,
   requireStudent,
 } from "../lib/auth/guards.js";
 import {
@@ -80,8 +81,9 @@ function serialize(view: LeaveRequestView) {
 /** Maps typed domain errors to HTTP responses. Never forwards a raw
  * database error, SQL message, or stack trace — anything not one of these
  * known LeaveDomainError subtypes is treated as unexpected and re-thrown for
- * Fastify's own error handler (which logs server-side, returns a generic
- * 500 with no internal detail — Fastify's default behavior, unmodified). */
+ * the app's own global error handler (lib/errorHandler.ts, registered in
+ * app.ts), which logs it server-side and returns a fixed, generic 500 with
+ * no internal detail (G-01). */
 async function sendLeaveError(reply: FastifyReply, err: unknown): Promise<void> {
   if (err instanceof LeaveRequestNotFoundError) {
     await reply.code(404).send({ error: { code: err.code, message: err.message } });
@@ -111,7 +113,10 @@ async function sendLeaveError(reply: FastifyReply, err: unknown): Promise<void> 
 export async function leaveRoutes(app: FastifyInstance) {
   app.post(
     "/leave-requests",
-    { preHandler: [app.authenticate, requireStudent()] },
+    {
+      preHandler: [app.authenticate, requireStudent()],
+      config: { rateLimit: app.rateLimitTiers.create },
+    },
     async (request, reply) => {
       const body = createLeaveRequestBodySchema.safeParse(request.body);
       if (!body.success) {
@@ -144,15 +149,30 @@ export async function leaveRoutes(app: FastifyInstance) {
     },
   );
 
-  app.get(
-    "/leave-requests",
-    { preHandler: [app.authenticate, requireStudent()] },
-    async (request, reply) => {
-      const studentId = (request.auth!.profile as { kind: "student"; id: string }).id;
-      const views = await app.leaveService.listForStudent(studentId);
+  // No role guard in the preHandler chain here — same pattern as
+  // GET /leave-requests/:leaveRequestId below: both the owning student
+  // (their own requests) and a linked parent/guardian (every linked
+  // student's requests, G-05) may call this, so the role branch happens in
+  // the handler rather than blocking one of them out beforehand. Unlike the
+  // single-id read path, there is no id parameter here for an unrelated
+  // caller to probe — an unrelated/unlinked parent simply gets an empty
+  // array, never an error, so no anti-enumeration handling is needed.
+  app.get("/leave-requests", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const profile = request.auth!.profile;
+    if (profile.kind === "student") {
+      const views = await app.leaveService.listForStudent(profile.id);
       await reply.code(200).send(views.map(serialize));
-    },
-  );
+      return;
+    }
+    if (profile.kind === "parent") {
+      const views = await app.leaveService.listForParent(profile.id);
+      await reply.code(200).send(views.map(serialize));
+      return;
+    }
+    await reply.code(403).send({
+      error: { code: "role_required", message: "Student or parent/guardian role required." },
+    });
+  });
 
   app.get(
     "/leave-requests/:leaveRequestId",
@@ -231,6 +251,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         requireParentOrGuardian(),
         requireActiveTrustedDevice(app.authDbPort),
       ],
+      config: { rateLimit: app.rateLimitTiers.decision },
     },
     async (request, reply) => {
       const params = paramsSchema.safeParse(request.params);
@@ -258,6 +279,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         requireParentOrGuardian(),
         requireActiveTrustedDevice(app.authDbPort),
       ],
+      config: { rateLimit: app.rateLimitTiers.decision },
     },
     async (request, reply) => {
       const params = paramsSchema.safeParse(request.params);
@@ -274,6 +296,50 @@ export async function leaveRoutes(app: FastifyInstance) {
         request.body,
         reply,
       );
+    },
+  );
+
+  // Staff-only, from manual_verification only (ADR-019 §2) — never a parent
+  // action, never automatic. Role set matches the existing
+  // leave_requests_all_reception/_hostel_admin/_super_admin RLS grants
+  // (packages/db/src/schema/leave.ts); library_incharge is deliberately
+  // excluded (no RLS grant on leave_requests for that role). Hostel-scope
+  // enforcement for reception_warden/hostel_admin happens in the repository
+  // (Fastify's own DB connection bypasses RLS, per repository.ts).
+  app.post(
+    "/leave-requests/:leaveRequestId/expire",
+    {
+      preHandler: [
+        app.authenticate,
+        requireStaffRole("reception_warden", "hostel_admin", "super_admin"),
+      ],
+      config: { rateLimit: app.rateLimitTiers.expire },
+    },
+    async (request, reply) => {
+      const params = paramsSchema.safeParse(request.params);
+      if (!params.success) {
+        await reply
+          .code(400)
+          .send({ error: { code: "validation_failed", message: "Invalid leave request id." } });
+        return;
+      }
+
+      const profile = request.auth!.profile as {
+        kind: "staff";
+        id: string;
+        role: "reception_warden" | "hostel_admin" | "super_admin";
+      };
+
+      try {
+        const view = await app.leaveService.markExpired({
+          leaveRequestId: params.data.leaveRequestId,
+          actingStaffId: profile.id,
+          actingStaffRole: profile.role,
+        });
+        await reply.code(200).send(serialize(view));
+      } catch (err) {
+        await sendLeaveError(reply, err);
+      }
     },
   );
 }

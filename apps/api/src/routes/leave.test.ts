@@ -633,7 +633,7 @@ describe("leave routes (end-to-end through the real app)", () => {
     });
   });
 
-  describe("GET /leave-requests — student's own list", () => {
+  describe("GET /leave-requests — own (student) or linked-students' (parent/guardian) list (G-05)", () => {
     it("unauthenticated -> 401", async () => {
       const { app } = await buildTestApp();
       const res = await app.inject({ method: "GET", url: "/api/v1/leave-requests" });
@@ -641,9 +641,9 @@ describe("leave routes (end-to-end through the real app)", () => {
       await app.close();
     });
 
-    it("authenticated non-student (parent) -> 403", async () => {
+    it("authenticated staff (neither student nor parent) -> 403", async () => {
       const { app } = await buildTestApp();
-      const token = await tokenFor(PARENT_A_AUTH);
+      const token = await tokenFor(STAFF_AUTH);
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/leave-requests",
@@ -653,7 +653,7 @@ describe("leave routes (end-to-end through the real app)", () => {
       await app.close();
     });
 
-    it("returns only the authenticated student's own requests", async () => {
+    it("student: returns only the authenticated student's own requests", async () => {
       const { app, leaveRepo } = await buildTestApp();
       await leaveRepo.create({
         studentId: STUDENT_2_ID,
@@ -672,6 +672,63 @@ describe("leave routes (end-to-end through the real app)", () => {
       const list = res.json();
       expect(Array.isArray(list)).toBe(true);
       expect(list.every((r: { studentId: string }) => r.studentId === STUDENT_1_ID)).toBe(true);
+      await app.close();
+    });
+
+    it("linked parent: returns their linked student's requests, never a client-supplied filter (G-05)", async () => {
+      const { app } = await buildTestApp();
+      const token = await tokenFor(PARENT_A_AUTH); // linked to STUDENT_1_ID only
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave-requests",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const list = res.json();
+      expect(Array.isArray(list)).toBe(true);
+      expect(list.length).toBeGreaterThan(0);
+      expect(list.every((r: { studentId: string }) => r.studentId === STUDENT_1_ID)).toBe(true);
+      await app.close();
+    });
+
+    it("guardian relationship gets the same list access as a father/mother relationship (ADR-016 Model C — no relationship_type distinction)", async () => {
+      const { app, leaveRepo } = await buildTestApp();
+      leaveRepo.linkParentToStudent(PARENT_B_ID, STUDENT_1_ID); // simulate a second, e.g. guardian, link
+      const token = await tokenFor("parent-b-auth-user");
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave-requests",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const list = res.json();
+      expect(list.length).toBeGreaterThan(0);
+      await app.close();
+    });
+
+    it("unrelated/unlinked parent: 200 with an empty array, never an error — no enumeration surface exists here (no id parameter to probe)", async () => {
+      const { app } = await buildTestApp();
+      const token = await tokenFor(PARENT_B_AUTH); // never linked to any student in this fixture
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave-requests",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual([]);
+      await app.close();
+    });
+
+    it("parent list response contains no other parent's identity or unrelated leakage", async () => {
+      const { app } = await buildTestApp();
+      const token = await tokenFor(PARENT_A_AUTH);
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave-requests",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.body).not.toContain(PARENT_B_ID);
+      expect(res.body).not.toContain(token);
       await app.close();
     });
   });
@@ -748,6 +805,155 @@ describe("leave routes (end-to-end through the real app)", () => {
         payload: validBody,
       });
       expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+  });
+
+  describe("POST /leave-requests/:id/expire (ADR-019 §2 — staff-only, from manual_verification only)", () => {
+    const RECEPTION_A_AUTH = "reception-a-auth-user";
+    const RECEPTION_B_AUTH = "reception-b-auth-user";
+    const SUPER_ADMIN_AUTH = "super-admin-auth-user";
+    const HOSTEL_A = "hostel-a";
+    const HOSTEL_B = "hostel-b";
+
+    async function buildExpireTestApp(status: LeaveRequestStatus = "manual_verification") {
+      const authDb = new FakeAuthDbPort()
+        .addParent(PARENT_A_AUTH, PARENT_A_ID)
+        .addStudent(STUDENT_AUTH, STUDENT_1_ID, null)
+        .addStaff(RECEPTION_A_AUTH, "reception-a", "reception_warden", HOSTEL_A)
+        .addStaff(RECEPTION_B_AUTH, "reception-b", "reception_warden", HOSTEL_B)
+        .addStaff(SUPER_ADMIN_AUTH, "super-admin-1", "super_admin", null)
+        .setActiveDevice(PARENT_A_ID, true);
+
+      const leaveRepo = new FakeLeaveRepository()
+        .addLeaveRequest(makeLeaveRequest("22222222-2222-2222-2222-222222222222", status))
+        .linkStudentToHostel(STUDENT_1_ID, HOSTEL_A)
+        .linkStaffToHostel("reception-a", HOSTEL_A)
+        .linkStaffToHostel("reception-b", HOSTEL_B);
+
+      const jwtVerifier = createJwtVerifier(
+        { supabaseUrl: "http://127.0.0.1:9999" },
+        async () => publicKey,
+      );
+
+      const app = await buildApp({
+        authOverrides: { jwtVerifier, authDbPort: authDb },
+        leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+      });
+      return { app };
+    }
+
+    const LEAVE_ID = "22222222-2222-2222-2222-222222222222";
+
+    it("unauthenticated: 401", async () => {
+      const { app } = await buildExpireTestApp();
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/expire`,
+      });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it("a parent (not staff) cannot mark expired: 403", async () => {
+      const { app } = await buildExpireTestApp();
+      const token = await tokenFor(PARENT_A_AUTH);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/expire`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+
+    it("the owning student cannot mark expired: 403", async () => {
+      const { app } = await buildExpireTestApp();
+      const token = await tokenFor(STUDENT_AUTH);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/expire`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+
+    it("library_incharge cannot mark expired: 403 (no leave_requests RLS grant for that role)", async () => {
+      const authDb = new FakeAuthDbPort().addStaff(
+        "library-auth",
+        "library-1",
+        "library_incharge",
+        null,
+      );
+      const leaveRepo = new FakeLeaveRepository().addLeaveRequest(
+        makeLeaveRequest(LEAVE_ID, "manual_verification"),
+      );
+      const jwtVerifier = createJwtVerifier(
+        { supabaseUrl: "http://127.0.0.1:9999" },
+        async () => publicKey,
+      );
+      const app = await buildApp({
+        authOverrides: { jwtVerifier, authDbPort: authDb },
+        leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+      });
+      const token = await tokenFor("library-auth");
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/expire`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+
+    it("reception_warden in the SAME hostel: 200, status becomes expired", async () => {
+      const { app } = await buildExpireTestApp("manual_verification");
+      const token = await tokenFor(RECEPTION_A_AUTH);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/expire`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().status).toBe("expired");
+      await app.close();
+    });
+
+    it("reception_warden in a DIFFERENT hostel: 404 (anti-enumeration, not a 403)", async () => {
+      const { app } = await buildExpireTestApp("manual_verification");
+      const token = await tokenFor(RECEPTION_B_AUTH);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/expire`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it("super_admin: 200 regardless of hostel", async () => {
+      const { app } = await buildExpireTestApp("manual_verification");
+      const token = await tokenFor(SUPER_ADMIN_AUTH);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/expire`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().status).toBe("expired");
+      await app.close();
+    });
+
+    it("wrong status (not manual_verification): 409, never silently accepted", async () => {
+      const { app } = await buildExpireTestApp("father_notified");
+      const token = await tokenFor(RECEPTION_A_AUTH);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/expire`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(409);
       await app.close();
     });
   });

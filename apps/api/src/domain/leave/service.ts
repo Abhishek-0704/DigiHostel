@@ -10,6 +10,7 @@ import type {
   CreateLeaveRequestInput,
   LeaveDecision,
   LeaveRequestView,
+  MarkExpiredInput,
 } from "./types.js";
 
 /**
@@ -89,6 +90,17 @@ export class LeaveService {
     return this.repository.listForStudent(studentId);
   }
 
+  /** All leave requests belonging to any student linked to `parentId` (G-05)
+   * — same relationship authorization `getForParent`/`decide` already use,
+   * just unfiltered by a specific leaveRequestId. No anti-enumeration
+   * concern here (unlike the single-id read path): this is a list scoped
+   * entirely to the caller's own identity, with no id parameter a caller
+   * could probe — an unrelated/no-link parent simply gets an empty array,
+   * never an error. */
+  async listForParent(parentId: string): Promise<LeaveRequestView[]> {
+    return this.repository.listForParent(parentId);
+  }
+
   /** Read path for the owning student — same anti-enumeration shape as
    * getForParent: "doesn't exist" and "exists but belongs to another
    * student" both throw the identical LeaveRequestNotFoundError. */
@@ -101,5 +113,21 @@ export class LeaveService {
       throw new LeaveRequestNotFoundError(leaveRequestId);
     }
     return view;
+  }
+
+  /** Staff-only transition from manual_verification to expired (ADR-019 §2)
+   * — no biometric gate (not a parent decision), same conflict/not-found
+   * error mapping as decide(). */
+  async markExpired(input: MarkExpiredInput): Promise<LeaveRequestView> {
+    const outcome = await this.repository.markExpired(input);
+
+    switch (outcome.kind) {
+      case "success":
+        return outcome.leaveRequest;
+      case "not_found":
+        throw new LeaveRequestNotFoundError(input.leaveRequestId);
+      case "conflict":
+        throw new LeaveRequestConflictError(input.leaveRequestId, outcome.currentStatus);
+    }
   }
 }

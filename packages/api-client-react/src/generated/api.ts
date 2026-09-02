@@ -271,7 +271,10 @@ export const useCreateLeaveRequest = <TError = ValidationErrorResponse | Unauthe
     }
     
 /**
- * @summary List the authenticated student's own leave requests
+ * Scope is derived entirely from the authenticated caller's own resolved profile, never a client-supplied filter. An authenticated student receives only their own requests. An authenticated parent/guardian receives every leave request belonging to a student they have a `parent_student_relationships` link to (any relationship_type, per ADR-016 Model C — escalation order does not restrict visibility). An unrelated/unlinked parent receives an empty array, not an error — there is no id parameter here for a caller to probe, so no anti-enumeration handling applies (unlike GET /leave-requests/{leaveRequestId}). Any other authenticated role (staff) receives 403.
+
+ * @summary List leave requests visible to the authenticated caller — their own (student), or every linked student's (parent/guardian, G-05)
+
  */
 export const listLeaveRequests = (
     
@@ -318,7 +321,8 @@ export type ListLeaveRequestsQueryError = UnauthenticatedResponse | ForbiddenRes
 
 
 /**
- * @summary List the authenticated student's own leave requests
+ * @summary List leave requests visible to the authenticated caller — their own (student), or every linked student's (parent/guardian, G-05)
+
  */
 
 export function useListLeaveRequests<TData = Awaited<ReturnType<typeof listLeaveRequests>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
@@ -538,6 +542,71 @@ export const useRejectLeaveRequest = <TError = ValidationErrorResponse | Unauthe
       > => {
 
       const mutationOptions = getRejectLeaveRequestMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: explicitly mark a leave request expired from manual_verification (ADR-019 §2). Never automatic — no scheduled job may perform this transition.
+
+ */
+export const expireLeaveRequest = (
+    leaveRequestId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<LeaveRequest>(
+      {url: `/leave-requests/${leaveRequestId}/expire`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getExpireLeaveRequestMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof expireLeaveRequest>>, TError,{leaveRequestId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof expireLeaveRequest>>, TError,{leaveRequestId: string}, TContext> => {
+
+const mutationKey = ['expireLeaveRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof expireLeaveRequest>>, {leaveRequestId: string}> = (props) => {
+          const {leaveRequestId} = props ?? {};
+
+          return  expireLeaveRequest(leaveRequestId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ExpireLeaveRequestMutationResult = NonNullable<Awaited<ReturnType<typeof expireLeaveRequest>>>
+    
+    export type ExpireLeaveRequestMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: explicitly mark a leave request expired from manual_verification (ADR-019 §2). Never automatic — no scheduled job may perform this transition.
+
+ */
+export const useExpireLeaveRequest = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof expireLeaveRequest>>, TError,{leaveRequestId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof expireLeaveRequest>>,
+        TError,
+        {leaveRequestId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getExpireLeaveRequestMutationOptions(options);
 
       return useMutation(mutationOptions);
     }

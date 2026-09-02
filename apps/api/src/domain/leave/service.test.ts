@@ -209,6 +209,28 @@ describe("LeaveService — student creation and ownership", () => {
     expect(results[0].id).toBe("lr-1");
   });
 
+  it("listForParent returns only requests for students the parent is linked to (G-05)", async () => {
+    const repo = new FakeLeaveRepository()
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "pending"))
+      .addLeaveRequest(makeLeaveRequest("lr-2", STUDENT_2, "pending"))
+      .linkParentToStudent(PARENT_A, STUDENT_1); // not linked to STUDENT_2
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const results = await service.listForParent(PARENT_A);
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe("lr-1");
+  });
+
+  it("listForParent: an unrelated/unlinked parent gets an empty array, never an error", async () => {
+    const repo = new FakeLeaveRepository().addLeaveRequest(
+      makeLeaveRequest("lr-1", STUDENT_1, "pending"),
+    );
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const results = await service.listForParent(PARENT_B); // never linked
+    expect(results).toEqual([]);
+  });
+
   it("getForStudent: owning student allowed", async () => {
     const repo = new FakeLeaveRepository().addLeaveRequest(
       makeLeaveRequest("lr-1", STUDENT_1, "pending"),
@@ -235,5 +257,76 @@ describe("LeaveService — student creation and ownership", () => {
     expect(errorForOtherStudent).toBeInstanceOf(LeaveRequestNotFoundError);
     expect(errorForNonexistentId).toBeInstanceOf(LeaveRequestNotFoundError);
     expect((errorForOtherStudent as Error).message).toBe((errorForNonexistentId as Error).message);
+  });
+});
+
+describe("LeaveService.markExpired — staff-only, from manual_verification only (ADR-019 §2)", () => {
+  const HOSTEL_A = "hostel-a";
+  const HOSTEL_B = "hostel-b";
+  const RECEPTION_A = "reception-a";
+  const RECEPTION_B = "reception-b";
+  const SUPER_ADMIN = "super-admin-1";
+
+  it("super_admin: manual_verification -> expired succeeds, unscoped by hostel", async () => {
+    const repo = new FakeLeaveRepository().addLeaveRequest(
+      makeLeaveRequest("lr-1", STUDENT_1, "manual_verification"),
+    );
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const view = await service.markExpired({
+      leaveRequestId: "lr-1",
+      actingStaffId: SUPER_ADMIN,
+      actingStaffRole: "super_admin",
+    });
+    expect(view.status).toBe("expired");
+  });
+
+  it("reception_warden in the SAME hostel as the student: succeeds", async () => {
+    const repo = new FakeLeaveRepository()
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "manual_verification"))
+      .linkStaffToHostel(RECEPTION_A, HOSTEL_A)
+      .linkStudentToHostel(STUDENT_1, HOSTEL_A);
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const view = await service.markExpired({
+      leaveRequestId: "lr-1",
+      actingStaffId: RECEPTION_A,
+      actingStaffRole: "reception_warden",
+    });
+    expect(view.status).toBe("expired");
+  });
+
+  it("reception_warden in a DIFFERENT hostel: denied (not found, anti-enumeration) — never silently a 403 that would confirm the request exists", async () => {
+    const repo = new FakeLeaveRepository()
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "manual_verification"))
+      .linkStaffToHostel(RECEPTION_B, HOSTEL_B)
+      .linkStudentToHostel(STUDENT_1, HOSTEL_A);
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    await expect(
+      service.markExpired({
+        leaveRequestId: "lr-1",
+        actingStaffId: RECEPTION_B,
+        actingStaffRole: "reception_warden",
+      }),
+    ).rejects.toBeInstanceOf(LeaveRequestNotFoundError);
+  });
+
+  it("wrong status (not manual_verification): 409 conflict, never silently accepted", async () => {
+    const repo = new FakeLeaveRepository().addLeaveRequest(
+      makeLeaveRequest("lr-1", STUDENT_1, "guardian_notified"),
+    );
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const err = await service
+      .markExpired({
+        leaveRequestId: "lr-1",
+        actingStaffId: SUPER_ADMIN,
+        actingStaffRole: "super_admin",
+      })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(LeaveRequestConflictError);
+    expect((err as LeaveRequestConflictError).currentStatus).toBe("guardian_notified");
   });
 });

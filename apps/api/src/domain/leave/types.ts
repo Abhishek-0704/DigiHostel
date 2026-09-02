@@ -24,6 +24,19 @@ export const DECIDABLE_STATUSES = [
 
 export type DecidableStatus = (typeof DECIDABLE_STATUSES)[number];
 
+/** The escalation chain's automated next hop for each stage (ADR-017,
+ * corrected by ADR-019 §1: guardian_notified -> in_app_call ->
+ * manual_verification, two hops, not one). Derived directly from
+ * DECIDABLE_STATUSES's own order rather than duplicated as a separate
+ * literal map — that order already IS the escalation order.
+ * `manual_verification` has no automatic successor: automation stops there
+ * (ADR-017 §9 / ADR-019 §2 — `expired` is reached only by explicit staff
+ * action, never a scheduled job). */
+export const NEXT_ESCALATION_STAGE: Partial<Record<DecidableStatus, DecidableStatus>> =
+  Object.fromEntries(
+    DECIDABLE_STATUSES.slice(0, -1).map((stage, i) => [stage, DECIDABLE_STATUSES[i + 1]]),
+  );
+
 export const TERMINAL_STATUSES = ["approved", "rejected", "expired"] as const;
 export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];
 
@@ -52,6 +65,19 @@ export interface DecideLeaveRequestInput {
   actingParentId: string;
   decision: LeaveDecision;
   biometricAssertion: BiometricAssertionInput;
+}
+
+/** Staff action from manual_verification only (ADR-019 §2) — `role` decides
+ * whether the repository applies the same hostel-scope restriction
+ * `leave_requests_all_reception`/`_hostel_admin`'s RLS policies encode
+ * (super_admin is unscoped; reception_warden/hostel_admin are not).
+ * Fastify's own DB connection bypasses RLS (repository.ts's doc comment),
+ * so this scope check must be re-enforced here in application code, exactly
+ * like decide()'s relationship check already is. */
+export interface MarkExpiredInput {
+  leaveRequestId: string;
+  actingStaffId: string;
+  actingStaffRole: "reception_warden" | "hostel_admin" | "super_admin";
 }
 
 /** Student-facing creation input. `studentId` is always resolved from the

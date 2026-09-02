@@ -1,9 +1,12 @@
-import type { DecideOutcome, LeaveRepository } from "../repository.js";
+import type { AdvanceOutcome, DecideOutcome, LeaveRepository } from "../repository.js";
 import {
   DECIDABLE_STATUSES,
+  NEXT_ESCALATION_STAGE,
   type CreateLeaveRequestInput,
+  type DecidableStatus,
   type DecideLeaveRequestInput,
   type LeaveRequestView,
+  type MarkExpiredInput,
 } from "../types.js";
 
 /** Deterministic in-memory fake of LeaveRepository — no live database
@@ -15,6 +18,17 @@ export class FakeLeaveRepository implements LeaveRepository {
   leaveRequests = new Map<string, LeaveRequestView>();
   linkedPairs = new Set<string>(); // `${parentId}:${studentId}`
   events: DecideLeaveRequestInput[] = [];
+  /** In-memory record of what a real DrizzleLeaveRepository would have
+   * scheduled via its JobScheduler — no real queue involved, purely for test
+   * assertions on escalation-job scheduling. */
+  scheduledEscalationJobs: Array<{ leaveRequestId: string; expectedStage: DecidableStatus }> = [];
+  scheduledNotificationJobs: Array<{ leaveRequestId: string; stage: DecidableStatus }> = [];
+  /** Hostel scoping for markExpired's staff-scope check — mirrors
+   * DrizzleLeaveRepository's hostelScopedForStaff join, in-memory:
+   * `${staffId}:${hostelId}` -> true means that staff id belongs to that
+   * hostel; a student's hostel is looked up via `studentHostels`. */
+  staffHostels = new Map<string, string>(); // staffId -> hostelId
+  studentHostels = new Map<string, string>(); // studentId -> hostelId
 
   addLeaveRequest(view: LeaveRequestView) {
     this.leaveRequests.set(view.id, view);
@@ -22,6 +36,14 @@ export class FakeLeaveRepository implements LeaveRepository {
   }
   linkParentToStudent(parentId: string, studentId: string) {
     this.linkedPairs.add(`${parentId}:${studentId}`);
+    return this;
+  }
+  linkStaffToHostel(staffId: string, hostelId: string) {
+    this.staffHostels.set(staffId, hostelId);
+    return this;
+  }
+  linkStudentToHostel(studentId: string, hostelId: string) {
+    this.studentHostels.set(studentId, hostelId);
     return this;
   }
 
@@ -68,12 +90,19 @@ export class FakeLeaveRepository implements LeaveRepository {
       updatedAt: new Date().toISOString(),
     };
     this.leaveRequests.set(view.id, view);
+    this.scheduledEscalationJobs.push({ leaveRequestId: view.id, expectedStage: "pending" });
     return view;
   }
 
   async listForStudent(studentId: string): Promise<LeaveRequestView[]> {
     return [...this.leaveRequests.values()]
       .filter((r) => r.studentId === studentId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async listForParent(parentId: string): Promise<LeaveRequestView[]> {
+    return [...this.leaveRequests.values()]
+      .filter((r) => this.linkedPairs.has(`${parentId}:${r.studentId}`))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
@@ -84,5 +113,54 @@ export class FakeLeaveRepository implements LeaveRepository {
     const request = this.leaveRequests.get(leaveRequestId);
     if (!request || request.studentId !== studentId) return null;
     return request;
+  }
+
+  async advanceEscalation(
+    leaveRequestId: string,
+    expectedStage: DecidableStatus,
+  ): Promise<AdvanceOutcome> {
+    const nextStage = NEXT_ESCALATION_STAGE[expectedStage];
+    if (!nextStage) {
+      return { kind: "noop" };
+    }
+    const request = this.leaveRequests.get(leaveRequestId);
+    if (!request || request.status !== expectedStage) {
+      return { kind: "noop" };
+    }
+    const updated: LeaveRequestView = {
+      ...request,
+      status: nextStage,
+      updatedAt: new Date().toISOString(),
+    };
+    this.leaveRequests.set(leaveRequestId, updated);
+    if (NEXT_ESCALATION_STAGE[nextStage]) {
+      this.scheduledEscalationJobs.push({ leaveRequestId, expectedStage: nextStage });
+    }
+    this.scheduledNotificationJobs.push({ leaveRequestId, stage: nextStage });
+    return { kind: "advanced", leaveRequest: updated, nextStage };
+  }
+
+  async markExpired(input: MarkExpiredInput): Promise<DecideOutcome> {
+    const request = this.leaveRequests.get(input.leaveRequestId);
+    if (!request) {
+      return { kind: "not_found" };
+    }
+    if (input.actingStaffRole !== "super_admin") {
+      const staffHostel = this.staffHostels.get(input.actingStaffId);
+      const studentHostel = this.studentHostels.get(request.studentId);
+      if (!staffHostel || staffHostel !== studentHostel) {
+        return { kind: "not_found" };
+      }
+    }
+    if (request.status !== "manual_verification") {
+      return { kind: "conflict", currentStatus: request.status };
+    }
+    const updated: LeaveRequestView = {
+      ...request,
+      status: "expired",
+      updatedAt: new Date().toISOString(),
+    };
+    this.leaveRequests.set(input.leaveRequestId, updated);
+    return { kind: "success", leaveRequest: updated };
   }
 }

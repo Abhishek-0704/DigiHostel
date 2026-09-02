@@ -20,6 +20,11 @@ export const trustedDevices = pgTable(
       .references(() => parents.id),
     platform: devicePlatform("platform").notNull(),
     deviceFingerprint: text("device_fingerprint").notNull(),
+    // Nullable: a device is trusted (registered) before push permission is
+    // necessarily granted/obtained on it. Populated by the parent-mobile app's
+    // own device-registration flow (ADR-004/ADR-001 — out of scope here); the
+    // notification worker (ADR-018) simply finds none until that flow exists.
+    expoPushToken: text("expo_push_token"),
     registeredAt: timestamp("registered_at", { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     revokedReason: text("revoked_reason"),

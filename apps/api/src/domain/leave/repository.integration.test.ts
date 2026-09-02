@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { eq } from "drizzle-orm";
 import {
+  eq,
+  inArray,
   db,
   hostels,
   students,
@@ -11,6 +12,8 @@ import {
   auditLogs,
 } from "@digihostel/db";
 import { DrizzleLeaveRepository } from "./repository.js";
+import { NoopJobScheduler } from "../../lib/queue/jobs.js";
+import type { LeaveRequestStatus } from "./types.js";
 
 /**
  * Real-Postgres integration test — exercises the actual atomic transaction
@@ -34,9 +37,11 @@ describe.skipIf(!RUN)("LeaveRepository (real Postgres integration)", () => {
   const OTHER_PARENT_ID = "c1000000-0000-0000-0000-000000000004";
   const GUARDIAN_ID = "c1000000-0000-0000-0000-000000000007";
 
-  const repository = new DrizzleLeaveRepository();
+  // NoopJobScheduler: this file verifies leave-decision/conditional-update
+  // semantics, not queue behavior — no live pg-boss connection needed.
+  const repository = new DrizzleLeaveRepository(new NoopJobScheduler());
 
-  async function freshLeaveRequestId(status: "pending" | "approved" | "expired" = "pending") {
+  async function freshLeaveRequestId(status: LeaveRequestStatus = "pending") {
     const [row] = await db
       .insert(leaveRequests)
       .values({
@@ -97,8 +102,26 @@ describe.skipIf(!RUN)("LeaveRepository (real Postgres integration)", () => {
   });
 
   afterAll(async () => {
-    await db.delete(auditLogs).where(eq(auditLogs.entityType, "leave_requests"));
-    await db.delete(leaveApprovalEvents);
+    // Scoped to THIS test file's own leave requests only — the previous
+    // unscoped `delete(auditLogs).where(entityType = 'leave_requests')` and
+    // fully-unscoped `delete(leaveApprovalEvents)` (no .where() at all) were
+    // a pre-existing bug: they wiped every leave_requests-typed audit_logs
+    // row and EVERY leave_approval_events row workspace-wide, including
+    // supabase/seed.sql's own fixture rows, whenever this file ran against
+    // a real database — silently corrupting shared local dev/seed state for
+    // any other verification (e.g. `supabase test db`) run afterward.
+    const ownLeaveRequestIds = (
+      await db
+        .select({ id: leaveRequests.id })
+        .from(leaveRequests)
+        .where(eq(leaveRequests.studentId, STUDENT_ID))
+    ).map((r) => r.id);
+    if (ownLeaveRequestIds.length > 0) {
+      await db.delete(auditLogs).where(inArray(auditLogs.entityId, ownLeaveRequestIds));
+      await db
+        .delete(leaveApprovalEvents)
+        .where(inArray(leaveApprovalEvents.leaveRequestId, ownLeaveRequestIds));
+    }
     await db.delete(leaveRequests).where(eq(leaveRequests.studentId, STUDENT_ID));
     await db
       .delete(parentStudentRelationships)
@@ -273,6 +296,51 @@ describe.skipIf(!RUN)("LeaveRepository (real Postgres integration)", () => {
     }
   });
 
+  it("listForParent: returns only requests belonging to a student the parent is linked to, never a client-supplied filter (G-05)", async () => {
+    const OTHER_STUDENT_ID = "c1000000-0000-0000-0000-000000000006";
+    await db.insert(students).values({
+      id: OTHER_STUDENT_ID,
+      rollNumber: "INTEGRATION-TEST-003",
+      fullName: "Unlinked Integration Test Student",
+      hostelId: HOSTEL_ID,
+    });
+
+    try {
+      const linkedRequest = await repository.create({
+        studentId: STUDENT_ID,
+        reason: "Linked student's request",
+        startDate: "2026-11-01",
+        endDate: "2026-11-02",
+      });
+      await repository.create({
+        studentId: OTHER_STUDENT_ID,
+        reason: "Unlinked student's request",
+        startDate: "2026-11-01",
+        endDate: "2026-11-02",
+      });
+
+      // PARENT_ID is linked (father) to STUDENT_ID only — see beforeAll.
+      const results = await repository.listForParent(PARENT_ID);
+      expect(results.some((r) => r.id === linkedRequest.id)).toBe(true);
+      expect(results.every((r) => r.studentId === STUDENT_ID)).toBe(true);
+
+      // GUARDIAN_ID is linked (guardian relationship_type) to the SAME
+      // STUDENT_ID — ADR-016 Model C: identical access, no relationship_type
+      // distinction.
+      const guardianResults = await repository.listForParent(GUARDIAN_ID);
+      expect(guardianResults.some((r) => r.id === linkedRequest.id)).toBe(true);
+
+      // OTHER_PARENT_ID has no relationship to any student — empty, not an
+      // error.
+      const unrelatedResults = await repository.listForParent(OTHER_PARENT_ID);
+      expect(unrelatedResults.some((r) => r.id === linkedRequest.id)).toBe(false);
+    } finally {
+      await db.delete(auditLogs).where(eq(auditLogs.actorId, OTHER_STUDENT_ID));
+      await db.delete(leaveRequests).where(eq(leaveRequests.studentId, OTHER_STUDENT_ID));
+      await db.delete(students).where(eq(students.id, OTHER_STUDENT_ID));
+    }
+  });
+
   it("findAccessibleLeaveRequestForStudent: owner allowed, a different student denied identically to a nonexistent id", async () => {
     const view = await repository.create({
       studentId: STUDENT_ID,
@@ -423,5 +491,149 @@ describe.skipIf(!RUN)("LeaveRepository (real Postgres integration)", () => {
       biometricAssertion: { assertionToken: "tok", actionId: "leave-decision" },
     });
     expect(outcome.kind).toBe("not_found");
+  });
+
+  describe("advanceEscalation (ADR-017 §4/§9, corrected by ADR-019)", () => {
+    it("advances one stage, writes exactly one escalated event, and returns the next stage", async () => {
+      const leaveRequestId = await freshLeaveRequestId("father_notified");
+
+      const outcome = await repository.advanceEscalation(leaveRequestId, "father_notified");
+
+      expect(outcome.kind).toBe("advanced");
+      if (outcome.kind !== "advanced") throw new Error("unreachable");
+      expect(outcome.nextStage).toBe("mother_notified");
+      expect(outcome.leaveRequest.status).toBe("mother_notified");
+
+      const events = await db
+        .select()
+        .from(leaveApprovalEvents)
+        .where(eq(leaveApprovalEvents.leaveRequestId, leaveRequestId));
+      expect(events).toHaveLength(1);
+      expect(events[0].eventType).toBe("escalated");
+
+      const audits = await db
+        .select()
+        .from(auditLogs)
+        .where(eq(auditLogs.entityId, leaveRequestId));
+      expect(audits).toHaveLength(1);
+      expect(audits[0].action).toBe("leave.escalated");
+    });
+
+    it("advances guardian_notified to in_app_call, not directly to manual_verification (ADR-019 §1)", async () => {
+      const leaveRequestId = await freshLeaveRequestId("guardian_notified");
+
+      const outcome = await repository.advanceEscalation(leaveRequestId, "guardian_notified");
+
+      expect(outcome.kind).toBe("advanced");
+      if (outcome.kind !== "advanced") throw new Error("unreachable");
+      expect(outcome.nextStage).toBe("in_app_call");
+    });
+
+    it("stale job (status no longer matches expectedStage): clean no-op, no writes", async () => {
+      const leaveRequestId = await freshLeaveRequestId("father_notified");
+
+      // Simulate the request having already been decided by the time this
+      // (now-stale) job runs.
+      await db
+        .update(leaveRequests)
+        .set({ status: "approved" })
+        .where(eq(leaveRequests.id, leaveRequestId));
+
+      const outcome = await repository.advanceEscalation(leaveRequestId, "father_notified");
+
+      expect(outcome.kind).toBe("noop");
+
+      const events = await db
+        .select()
+        .from(leaveApprovalEvents)
+        .where(eq(leaveApprovalEvents.leaveRequestId, leaveRequestId));
+      expect(events).toHaveLength(0);
+
+      const [request] = await db
+        .select()
+        .from(leaveRequests)
+        .where(eq(leaveRequests.id, leaveRequestId));
+      expect(request.status).toBe("approved"); // unchanged
+    });
+
+    it("manual_verification has no automatic successor: defensive no-op if ever called", async () => {
+      const leaveRequestId = await freshLeaveRequestId("father_notified");
+      await db
+        .update(leaveRequests)
+        .set({ status: "manual_verification" })
+        .where(eq(leaveRequests.id, leaveRequestId));
+
+      const outcome = await repository.advanceEscalation(leaveRequestId, "manual_verification");
+      expect(outcome.kind).toBe("noop");
+    });
+
+    it("two concurrent evaluate jobs for the same stage: exactly one advances", async () => {
+      const leaveRequestId = await freshLeaveRequestId("mother_notified");
+
+      const [a, b] = await Promise.all([
+        repository.advanceEscalation(leaveRequestId, "mother_notified"),
+        repository.advanceEscalation(leaveRequestId, "mother_notified"),
+      ]);
+
+      const outcomes = [a.kind, b.kind];
+      expect(outcomes.filter((k) => k === "advanced")).toHaveLength(1);
+      expect(outcomes.filter((k) => k === "noop")).toHaveLength(1);
+
+      const events = await db
+        .select()
+        .from(leaveApprovalEvents)
+        .where(eq(leaveApprovalEvents.leaveRequestId, leaveRequestId));
+      expect(events).toHaveLength(1);
+    });
+  });
+
+  describe("markExpired (ADR-019 §2 — staff-only, from manual_verification only)", () => {
+    it("super_admin: manual_verification -> expired succeeds", async () => {
+      const leaveRequestId = await freshLeaveRequestId("father_notified");
+      await db
+        .update(leaveRequests)
+        .set({ status: "manual_verification" })
+        .where(eq(leaveRequests.id, leaveRequestId));
+
+      const outcome = await repository.markExpired({
+        leaveRequestId,
+        actingStaffId: "22220000-0000-0000-0000-000000000001", // no staff row needed — super_admin is unscoped
+        actingStaffRole: "super_admin",
+      });
+
+      expect(outcome.kind).toBe("success");
+      if (outcome.kind !== "success") throw new Error("unreachable");
+      expect(outcome.leaveRequest.status).toBe("expired");
+
+      const events = await db
+        .select()
+        .from(leaveApprovalEvents)
+        .where(eq(leaveApprovalEvents.leaveRequestId, leaveRequestId));
+      expect(events).toHaveLength(1);
+      expect(events[0].eventType).toBe("expired");
+    });
+
+    it("wrong status (not manual_verification): 409 conflict, not silently accepted", async () => {
+      const leaveRequestId = await freshLeaveRequestId("father_notified");
+
+      const outcome = await repository.markExpired({
+        leaveRequestId,
+        actingStaffId: "22220000-0000-0000-0000-000000000001",
+        actingStaffRole: "super_admin",
+      });
+
+      expect(outcome.kind).toBe("conflict");
+      if (outcome.kind !== "conflict") throw new Error("unreachable");
+      expect(outcome.currentStatus).toBe("father_notified");
+    });
+
+    it("nonexistent leave request: not_found, same as decide()'s anti-enumeration shape", async () => {
+      const outcome = await repository.markExpired({
+        leaveRequestId: "99999999-9999-9999-9999-999999999999",
+        actingStaffId: "22220000-0000-0000-0000-000000000001",
+        actingStaffRole: "super_admin",
+      });
+      expect(outcome.kind).toBe("not_found");
+    });
   });
 });

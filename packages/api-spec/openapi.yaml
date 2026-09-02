@@ -50,11 +50,27 @@ paths:
     get:
       operationId: listLeaveRequests
       tags: [leave]
-      summary: List the authenticated student's own leave requests
+      summary: >
+        List leave requests visible to the authenticated caller — their own
+        (student), or every linked student's (parent/guardian, G-05)
+      description: >
+        Scope is derived entirely from the authenticated caller's own
+        resolved profile, never a client-supplied filter. An authenticated
+        student receives only their own requests. An authenticated
+        parent/guardian receives every leave request belonging to a student
+        they have a `parent_student_relationships` link to (any
+        relationship_type, per ADR-016 Model C — escalation order does not
+        restrict visibility). An unrelated/unlinked parent receives an empty
+        array, not an error — there is no id parameter here for a caller to
+        probe, so no anti-enumeration handling applies (unlike
+        GET /leave-requests/{leaveRequestId}). Any other authenticated role
+        (staff) receives 403.
       security: [{ bearerAuth: [] }]
       responses:
         "200":
-          description: The authenticated student's own leave requests, newest first
+          description: >
+            The caller's own (student) or linked students' (parent/guardian)
+            leave requests, newest first
           content:
             application/json:
               schema:
@@ -139,6 +155,35 @@ paths:
       responses:
         "200":
           description: Rejected — the leave request's authoritative new state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /leave-requests/{leaveRequestId}/expire:
+    post:
+      operationId: expireLeaveRequest
+      tags: [leave]
+      summary: >
+        Staff-only: explicitly mark a leave request expired from
+        manual_verification (ADR-019 §2). Never automatic — no scheduled job
+        may perform this transition.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LeaveRequestId"
+      responses:
+        "200":
+          description: Expired — the leave request's authoritative new state
           content:
             application/json:
               schema:
