@@ -45,7 +45,7 @@ src/
 
 Expo Router, file-system based, `typedRoutes` experiment enabled (`app.json`) for compile-time route-name/param checking. Route groups follow auth state boundaries: `(auth)` → `(onboarding)` → `(app)`. **Route protection is now real (Prompt 3)** — see `docs/authentication.md` §6 for `AuthGate`'s redirect logic; this is a UX/navigation mechanism only, never the actual security boundary.
 
-Every screen created in this pass is a structural placeholder (`PlaceholderScreen` component) — none contain business logic, matching this prompt's explicit scope boundary.
+Every screen created in *this* (Prompt 2) pass was a structural placeholder (`PlaceholderScreen` component) — none contained business logic, matching this prompt's explicit scope boundary. **As of Prompt 4A, `(auth)/{welcome,login,otp}` and `app/index.tsx` (Splash) are real, functional screens** — see `docs/authentication.md` §13. Every other route (`(onboarding)`, `(app)/*`) remains a `PlaceholderScreen`, out of scope until its own prompt.
 
 ## 4. Configuration / Environment Conventions
 
@@ -61,7 +61,7 @@ Never add a non-`EXPO_PUBLIC_` variable to this app's `env.example` or `.env` �
 
 ## 6. Shared Component Conventions
 
-`src/components/ui` (Button, Card, TextField, Badge, Divider), `src/components/feedback` (Loader, Skeleton, EmptyState, ErrorState, ErrorBoundary), `src/components/layout` (PageContainer, PageHeader, ScrollContainer, OfflineBanner, PlaceholderScreen). All are strongly typed, own no business logic, and read every visual value from the design tokens. Dialog, BottomSheet, Avatar, Chip, Snackbar, SearchBar, and a dedicated IconButton/NavigationBar were deliberately not built — no current screen needs them; add them when a real consumer exists.
+`src/components/ui` (Button, Card, TextField, Badge, Divider, **OTPInput — Prompt 4A**), `src/components/feedback` (Loader, Skeleton, EmptyState, ErrorState, ErrorBoundary), `src/components/layout` (PageContainer, PageHeader, ScrollContainer, OfflineBanner, PlaceholderScreen). All are strongly typed, own no business logic, and read every visual value from the design tokens. Dialog, BottomSheet, Avatar, Chip, Snackbar, SearchBar, and a dedicated IconButton/NavigationBar were deliberately not built — no current screen needs them; add them when a real consumer exists.
 
 ## 7. Service-Layer Conventions
 
