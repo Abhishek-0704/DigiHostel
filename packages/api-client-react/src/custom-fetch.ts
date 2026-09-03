@@ -23,11 +23,30 @@ export interface RequestConfig {
   headers?: HeadersInit;
 }
 
+/**
+ * Pluggable auth-token source (Prompt 3, apps/parent-mobile). This package
+ * deliberately knows nothing about Supabase or any other auth provider —
+ * an app that needs authenticated requests registers a provider once at
+ * startup (apps/parent-mobile does this in src/services/api/authTokenProvider.ts)
+ * rather than every generated hook call site attaching its own header.
+ * Registering nothing (the default) preserves the exact previous
+ * behavior — no Authorization header — so this is backward compatible for
+ * any consumer that doesn't need authenticated requests.
+ */
+type AuthTokenProvider = () => Promise<string | null>;
+let authTokenProvider: AuthTokenProvider | null = null;
+
+export function setAuthTokenProvider(provider: AuthTokenProvider | null): void {
+  authTokenProvider = provider;
+}
+
 export async function customFetch<T>(config: RequestConfig, options?: RequestInit): Promise<T> {
   const baseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
   const query = config.params
     ? `?${new URLSearchParams(config.params as Record<string, string>).toString()}`
     : "";
+
+  const accessToken = authTokenProvider ? await authTokenProvider() : null;
 
   const response = await fetch(`${baseUrl}${config.url}${query}`, {
     ...options,
@@ -35,6 +54,7 @@ export async function customFetch<T>(config: RequestConfig, options?: RequestIni
     signal: config.signal,
     headers: {
       "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...config.headers,
       ...options?.headers,
     },

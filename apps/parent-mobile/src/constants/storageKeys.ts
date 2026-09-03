@@ -5,9 +5,16 @@
  * at the call site.
  */
 export const STORAGE_KEYS = {
-  /** Reserved for the Supabase session persistence adapter (auth
-   * implementation is out of this prompt's scope — see
-   * src/services/supabase/client.ts's doc comment). */
+  /** NOT directly read/written by application code — Supabase's own SDK
+   * manages its own internal key name(s) via the `storage` adapter passed
+   * to `createClient` (src/services/supabase/client.ts); this constant is
+   * kept only as a documentation anchor for "this is where the session
+   * lives," not an actual lookup key. */
   supabaseSession: "digihostel.parent.supabase-session",
   themePreference: "digihostel.parent.theme-preference",
+  /** App-generated installation identifier (Prompt 3) — see
+   * src/services/deviceIdentity/deviceIdentity.ts. Never a hardware
+   * identifier (no IMEI/serial/MAC), never sent anywhere until a real
+   * device-registration endpoint exists. */
+  deviceInstallationId: "digihostel.parent.device-installation-id",
 } as const;

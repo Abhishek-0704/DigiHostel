@@ -27,4 +27,19 @@ export default tseslint.config(
       globals: { process: "readonly", console: "readonly" },
     },
   },
+  {
+    // metro.config.js (Prompt 3, apps/parent-mobile) — Expo's own official
+    // template always generates this as plain CommonJS (require/module.exports),
+    // since Metro loads it directly with Node, not through this repo's own
+    // TS/ESM tsconfig. Same treatment as the .mjs scripts override above:
+    // declare the Node globals/CommonJS pattern it legitimately needs,
+    // rather than fighting a convention Metro itself requires.
+    files: ["**/metro.config.js"],
+    languageOptions: {
+      globals: { require: "readonly", module: "writable", __dirname: "readonly" },
+    },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
 );

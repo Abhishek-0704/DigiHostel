@@ -8,3 +8,4 @@
  * the contract-generated (ADR-007) client as-is.
  */
 export * from "@digihostel/api-client-react";
+export * from "./authTokenProvider";

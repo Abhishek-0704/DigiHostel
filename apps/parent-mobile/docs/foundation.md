@@ -27,22 +27,23 @@ src/
   constants/                   Shared literal registries (storage keys, etc.)
   contexts/                    App-wide React Context providers
   features/                    One directory per future feature module (empty until that feature is built)
-  hooks/                       Reusable hooks (theme, network, session, debounce, and service-wrapper hooks)
+  hooks/                       Reusable hooks (theme, network, session, auth, debounce, and service-wrapper hooks)
   lib/                         Infra glue (QueryClient factory)
+  navigation/                  Route-protection logic (AuthGate + its pure routeGuard decision logic — Prompt 3)
   providers/                   AppProviders — the single composition root
-  services/                    Service abstractions (Supabase, storage, logger, biometric/device/notification/approval placeholders)
+  services/                    Service abstractions (Supabase, storage, logger, device identity, biometric/device/notification/approval placeholders)
   styles/                      Design tokens + typography scale
   types/                       App-local shared types (error taxonomy)
   utils/                       Pure, framework-agnostic helpers
 ```
 
-**Consolidation from the originally proposed skeleton:** `components/common/` and `components/navigation/` were folded into `components/layout/` — neither had genuinely distinct content once the actual foundation pieces were built (see `src/components/index.ts`'s doc comment). Split them back out if a future feature needs content that doesn't fit `layout/`.
+**Consolidation from the originally proposed skeleton:** `components/common/` and `components/navigation/` were folded into `components/layout/` — neither had genuinely distinct content once the actual foundation pieces were built (see `src/components/index.ts`'s doc comment). Split them back out if a future feature needs content that doesn't fit `layout/`. **This is unrelated to** the top-level `src/navigation/` directory added in Prompt 3 — that one holds route-*protection logic* (no UI components at all), not navigation-chrome components, so it doesn't reopen the consolidation decision above.
 
 `features/*` directories are intentionally not created in this pass — no feature has real code yet, and empty directories created merely to match a proposed skeleton were avoided per this prompt's own instruction.
 
 ## 3. Routing Conventions
 
-Expo Router, file-system based, `typedRoutes` experiment enabled (`app.json`) for compile-time route-name/param checking. Route groups follow auth state boundaries: `(auth)` → `(onboarding)` → `(app)`. No navigation guard is implemented yet — every group is currently reachable regardless of session state; wiring the actual guard is a future prompt's responsibility once auth state is real.
+Expo Router, file-system based, `typedRoutes` experiment enabled (`app.json`) for compile-time route-name/param checking. Route groups follow auth state boundaries: `(auth)` → `(onboarding)` → `(app)`. **Route protection is now real (Prompt 3)** — see `docs/authentication.md` §6 for `AuthGate`'s redirect logic; this is a UX/navigation mechanism only, never the actual security boundary.
 
 Every screen created in this pass is a structural placeholder (`PlaceholderScreen` component) — none contain business logic, matching this prompt's explicit scope boundary.
 
@@ -68,14 +69,15 @@ Every service is an interface + one implementation, mirroring the backend's own 
 
 | Service | Status | Note |
 |---|---|---|
-| `services/supabase` | Real (client, auth session, storage, realtime) | Session-lifecycle only — no login/OTP logic |
+| `services/supabase` | Real — session lifecycle **and phone-OTP send/verify** (Prompt 3) | See `docs/authentication.md`; no roll-number pre-check (backend gap) |
 | `services/storage` (secure storage) | Real | `expo-secure-store` wrapper |
 | `services/logger` | Real | Thin `console` wrapper, swappable later |
-| `services/biometric` | Placeholder, throws | No `expo-local-authentication` installed yet |
-| `services/devices` | Placeholder, throws | Blocked on a backend endpoint that doesn't exist (G-04) |
+| `services/deviceIdentity` | Real (Prompt 3) | App-generated UUID via `expo-crypto`, never a hardware identifier |
+| `services/biometric` | Placeholder, throws | No `expo-local-authentication` installed yet — Prompt 5 |
+| `services/devices` | **Partial (Prompt 3)** — status lookup real (RLS-verified); registration/revocation still throw | See `docs/authentication.md` §5 for exactly why each half is or isn't implemented |
 | `services/notifications` | Placeholder, throws | Blocked on a backend endpoint that doesn't exist |
 | `services/approvals` | Placeholder, throws | Backend contract IS ready; wiring deferred to the leave-approval feature prompt by this prompt's own scope boundary |
-| `services/api` | Real (re-export) | Thin indirection over `@digihostel/api-client-react` |
+| `services/api` | Real (re-export) + **auth-token wiring (Prompt 3)** | Thin indirection over `@digihostel/api-client-react`; `authTokenProvider.ts` attaches the Supabase session to every generated-client request |
 
 Never treat a placeholder's eventual real implementation as sufficient proof for a security decision by itself — the server remains authoritative regardless of what the client believes.
 
@@ -93,7 +95,9 @@ Prepared, not implemented: `NetworkContext` exposes a stable `"unknown" | "onlin
 
 ## 11. Testing Conventions
 
-Pure-logic modules (no `react-native`/`expo-router` import) are unit-tested under the repo's existing Vitest setup — `vitest.config.ts`'s include glob now also covers `apps/parent-mobile/src/**/*.test.ts`. Component/screen testing needs a React-Native-aware test runner (`jest-expo` + `@testing-library/react-native` is the Expo-recommended combination) — **not installed in this pass**, a deliberate open decision (see the foundation report's Risks section), not a silent gap.
+Pure-logic modules (no `react-native`/`expo-router` import) are unit-tested under the repo's existing Vitest setup — `vitest.config.ts`'s include glob now also covers `apps/parent-mobile/src/**/*.test.ts`. Component/screen testing needs a React-Native-aware test runner (`jest-expo` + `@testing-library/react-native` is the Expo-recommended combination) — **not installed in this pass**, a deliberate open decision, not a silent gap.
+
+**Prompt 3 addition:** `*.integration.test.ts` files construct their own plain `@supabase/supabase-js` client (not the app's `expo-secure-store`-dependent one) and run real queries against the local Supabase instance, gated by `SUPABASE_URL`/`SUPABASE_ANON_KEY` env vars (skip gracefully when unset, same convention as `apps/api`'s `DATABASE_URL`-gated suite). Use real `supabase/seed.sql` fixtures — never invent test data outside it.
 
 ## 12. Development Conventions
 
@@ -101,3 +105,4 @@ Pure-logic modules (no `react-native`/`expo-router` import) are unit-tested unde
 - Use `npx expo install <package>` for any Expo/React-Native-ecosystem dependency (SDK-compatible version resolution), plain `pnpm add` for everything else.
 - Absolute imports from route files use the `@/` alias (`@/src/...`); files within `src/` use relative imports.
 - Every new dependency must be justified against the accepted architecture (ADR-004/007/008/009/010/014) before being added — do not install "for later."
+- **`metro.config.js` (Prompt 3):** required for Metro to resolve workspace packages that use TypeScript's NodeNext `.js`-extension-imports-a-`.ts`-file convention (`@digihostel/api-client-react`, `@digihostel/api-zod`). Do not delete it — a full `expo export` (this repo's standard buildability check) will fail without it the moment any code imports those packages' internals, as it did during this prompt's own implementation until the fix landed.

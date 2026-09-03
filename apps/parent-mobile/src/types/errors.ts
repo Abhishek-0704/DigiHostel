@@ -1,15 +1,33 @@
 /**
- * Application error taxonomy (Prompt 2 foundation). Mirrors the backend's
- * own typed-error / safe-message discipline (apps/api/src/domain/leave/errors.ts,
- * apps/api/src/lib/errorHandler.ts — G-01): a small set of known error kinds
- * with pre-approved, safe, user-facing messages, plus a catch-all for
- * anything unexpected that must never surface raw detail to the user.
- *
- * This file defines the taxonomy only — no feature wires it up yet.
+ * Application error taxonomy (Prompt 2 foundation, extended in Prompt 3 with
+ * authentication/device-specific kinds). Mirrors the backend's own
+ * typed-error / safe-message discipline
+ * (apps/api/src/domain/leave/errors.ts, apps/api/src/lib/errorHandler.ts —
+ * G-01): a small set of known error kinds with pre-approved, safe,
+ * user-facing messages, plus a catch-all for anything unexpected that must
+ * never surface raw detail to the user.
  */
 
 export type AppErrorKind =
-  "network" | "unauthenticated" | "forbidden" | "not_found" | "conflict" | "validation" | "unknown";
+  | "network"
+  | "unauthenticated"
+  | "forbidden"
+  | "not_found"
+  | "conflict"
+  | "validation"
+  | "unknown"
+  // Auth/device kinds (Prompt 3):
+  | "invalid_phone_number"
+  | "otp_send_failed"
+  | "otp_expired"
+  | "otp_invalid"
+  | "otp_rate_limited"
+  | "auth_provider_unavailable"
+  | "session_restore_failed"
+  | "session_refresh_failed"
+  | "device_not_trusted"
+  | "device_revoked"
+  | "device_registration_unavailable";
 
 export class AppError extends Error {
   constructor(
@@ -33,6 +51,18 @@ const SAFE_MESSAGES: Record<AppErrorKind, string> = {
   conflict: "This action can no longer be completed — the item may have already changed.",
   validation: "Please check the information you entered and try again.",
   unknown: "Something went wrong. Please try again.",
+  invalid_phone_number: "Please enter a valid mobile number.",
+  otp_send_failed: "We couldn't send a verification code. Please try again.",
+  otp_expired: "That code has expired. Please request a new one.",
+  otp_invalid: "That code isn't correct. Please check and try again.",
+  otp_rate_limited: "Too many attempts. Please wait a moment before trying again.",
+  auth_provider_unavailable: "Sign-in is temporarily unavailable. Please try again shortly.",
+  session_restore_failed: "We couldn't restore your session. Please sign in again.",
+  session_refresh_failed: "Your session couldn't be renewed. Please sign in again.",
+  device_not_trusted: "This device isn't verified yet.",
+  device_revoked: "This device's access has been revoked.",
+  device_registration_unavailable:
+    "Device verification isn't available yet. Please try again later.",
 };
 
 /** Maps an arbitrary caught value (a thrown fetch error, a generated
