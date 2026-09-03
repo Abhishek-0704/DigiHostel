@@ -7,6 +7,12 @@ node_modules
 dist
 *.tsbuildinfo
 
+# Expo (apps/parent-mobile, apps/student-mobile) — local dev-server cache,
+# machine-specific, never committed.
+.expo
+web-build
+expo-env.d.ts
+
 # environment / secrets
 .env
 .env.*

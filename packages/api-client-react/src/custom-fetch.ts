@@ -1,6 +1,13 @@
 // Fetch mutator consumed by Orval-generated hooks (packages/api-spec/orval.config.ts).
-// Each app supplies its own base URL via API_BASE_URL at build/runtime; this stays
-// generic infrastructure, not business logic.
+// Each consuming app supplies its own base URL via EXPO_PUBLIC_API_BASE_URL at
+// build/runtime; this stays generic infrastructure, not business logic.
+//
+// EXPO_PUBLIC_-prefixed, not a bare API_BASE_URL: this package's only current
+// consumers are Expo apps (apps/parent-mobile, apps/student-mobile), and Expo
+// only inlines env vars into the client bundle when they carry that exact
+// prefix (Expo's own documented convention — see apps/parent-mobile's
+// env.example) — an unprefixed name would silently resolve to undefined at
+// runtime, not merely fail to build.
 
 export interface CustomFetchError {
   status: number;
@@ -17,7 +24,7 @@ export interface RequestConfig {
 }
 
 export async function customFetch<T>(config: RequestConfig, options?: RequestInit): Promise<T> {
-  const baseUrl = process.env.API_BASE_URL ?? "";
+  const baseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
   const query = config.params
     ? `?${new URLSearchParams(config.params as Record<string, string>).toString()}`
     : "";
