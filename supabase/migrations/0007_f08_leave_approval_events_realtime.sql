@@ -1,0 +1,34 @@
+-- PRR Finding F-08 remediation — "Realtime/history event-only gap".
+--
+-- Prior state: only leave_requests and notifications were members of the
+-- supabase_realtime publication (0002_realtime_publication.sql). The
+-- Approval History feature's live-update behavior (parent-mobile's
+-- useLeaveRequestRealtime, filtered to one leave request) worked only as an
+-- INCIDENTAL side effect: every leave_approval_events insert made by
+-- apps/api/src/domain/leave/repository.ts today (`responded`, `escalated`,
+-- `expired`) happens to occur in the same transaction as a leave_requests
+-- status update, so a leave_requests change event happened to also be a
+-- proxy signal that a new history event existed. The actual immutable
+-- history table (leave_approval_events, ADR-015) was never itself
+-- realtime-enabled, and two enum event types already exist
+-- (packages/db/src/schema/enums.ts's leave_approval_event_type: `notified`,
+-- `manual_override`) that are not currently inserted by any code path but
+-- would, if ever inserted without an accompanying leave_requests status
+-- change, be invisible to a live-connected client until an unrelated
+-- manual refresh — exactly the "event-only" gap: only the subset of
+-- history events that happen to ride along with a state-table change get a
+-- live-update signal at all.
+--
+-- Fix: leave_approval_events joins the publication directly. RLS
+-- (already enabled and policy-covered — packages/db/src/schema/leave.ts's
+-- lae_select_own_student/lae_select_linked_parent policies) continues to
+-- scope exactly which rows each authenticated client's subscription
+-- receives; this statement only makes the table eligible for logical
+-- replication in the first place, per ADR-009 (which already names
+-- Postgres Changes as the accepted mechanism for state-table-driven
+-- updates) — no RLS policy is added, changed, or weakened, and no new
+-- authorization model is introduced.
+--
+-- Not a Drizzle-tracked schema change, hand-written per the same
+-- established precedent as 0002_realtime_publication.sql.
+alter publication supabase_realtime add table leave_approval_events;

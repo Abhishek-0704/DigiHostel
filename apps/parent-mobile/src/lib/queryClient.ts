@@ -1,5 +1,6 @@
-import { QueryClient, onlineManager } from "@tanstack/react-query";
+import { QueryClient, onlineManager, focusManager } from "@tanstack/react-query";
 import NetInfo from "@react-native-community/netinfo";
+import { AppState, type AppStateStatus } from "react-native";
 
 /**
  * Binds TanStack Query's `onlineManager` to real device connectivity
@@ -26,6 +27,32 @@ function bindOnlineManagerToNetInfo(): void {
 }
 
 /**
+ * F-08 remediation — binds TanStack Query's `focusManager` to RN's
+ * `AppState`, the library's own documented React Native recipe. Without
+ * this, `refetchOnWindowFocus` (below) is a pure no-op on this platform:
+ * the web-only `visibilitychange` event it defaults to listening for never
+ * fires in React Native, so nothing previously triggered a refetch when
+ * the app returned to the foreground. The one existing `AppState` listener
+ * in this app (`services/supabase/client.ts`) only starts/stops Supabase
+ * Auth's token auto-refresh — it never touched query state, so backgrounding
+ * the app long enough for the OS to suspend the websocket (without the
+ * realtime channel itself completing a CLOSED->SUBSCRIBED cycle before the
+ * user looks again) had no independent catch-up path beyond a manual
+ * pull-to-refresh.
+ */
+let focusManagerBound = false;
+function bindFocusManagerToAppState(): void {
+  if (focusManagerBound) return;
+  focusManagerBound = true;
+  focusManager.setEventListener((handleFocus) => {
+    const subscription = AppState.addEventListener("change", (state: AppStateStatus) => {
+      handleFocus(state === "active");
+    });
+    return () => subscription.remove();
+  });
+}
+
+/**
  * TanStack Query client factory (Prompt 2 foundation). Conservative
  * defaults appropriate for a mobile client talking to a REST backend that
  * is itself the source of truth (ADR-014/ADR-016) — no feature-specific
@@ -33,12 +60,19 @@ function bindOnlineManagerToNetInfo(): void {
  */
 export function createQueryClient(): QueryClient {
   bindOnlineManagerToNetInfo();
+  bindFocusManagerToAppState();
   return new QueryClient({
     defaultOptions: {
       queries: {
         retry: 2,
         staleTime: 30_000,
-        refetchOnWindowFocus: false,
+        // F-08: was `false`. Now that focusManager is actually wired to
+        // AppState above, this setting has a real effect for the first
+        // time — a foreground-catch-up refetch (still respecting
+        // `staleTime`, so it never fires more often than every 30s) that
+        // no longer depends solely on a realtime channel's own reconnect
+        // timing or a manual pull-to-refresh.
+        refetchOnWindowFocus: true,
       },
       mutations: {
         // Security-sensitive mutations (leave decisions) must never

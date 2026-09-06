@@ -30,7 +30,7 @@ No new table, no new RLS policy, no migration. No duplicate approval-history dat
 | Filter | **IMPLEMENTED** | By status, limited to the real vocabulary (`awaiting_response`/`approved`/`rejected`/`expired` — no `cancelled`) |
 | Sort | **IMPLEMENTED** | By requested date, decided date, or status — on raw timestamps, never formatted strings |
 | Pagination | **PARTIALLY IMPLEMENTED** | See §7 |
-| Realtime | **IMPLEMENTED** | Reuses `useLeaveRequestRealtime` unchanged |
+| Realtime | **IMPLEMENTED (F-08 hardened)** | Reuses `useLeaveRequestRealtime` unchanged, plus a new direct `leave_approval_events` subscription on History Detail — see §9 |
 | Offline read | **PARTIALLY IMPLEMENTED** | See §8 |
 
 ## 4. Screen Hierarchy
@@ -66,7 +66,11 @@ Read-only always; no write path exists here. Within a session, TanStack Query's 
 
 ## 9. Realtime Synchronization
 
-`useLeaveRequestRealtime` (built in Prompt 9B, unchanged) is reused as-is on both screens — unfiltered on History Home (mirrors the Leave Approval list's own reasoning: RLS scopes visibility, no cheap client-side filter value exists), filtered to `id=eq.<id>` on History Detail (refreshes both the record and its events query on any change). No second realtime architecture, no duplicate subscription pattern.
+`useLeaveRequestRealtime` (built in Prompt 9B, unchanged) is reused as-is on both screens — unfiltered on History Home (mirrors the Leave Approval list's own reasoning: RLS scopes visibility, no cheap client-side filter value exists), filtered to `id=eq.<id>` on History Detail (refreshes both the record and its events query on any change).
+
+**F-08 correction:** History Detail's live-update coverage of the events timeline previously depended entirely on this `leave_requests` subscription — correct only because every event this backend inserts today (`responded`, `escalated`, `expired`) happens to occur in the same transaction as a `leave_requests` status update. Two enum event types already exist (`notified`, `manual_override`, `packages/db/src/schema/enums.ts`) that are not currently inserted by any code path; had either ever been inserted without an accompanying status change, the timeline would have had no live-update signal at all. `leave_approval_events` now joins the `supabase_realtime` publication directly (`supabase/migrations/0007_f08_leave_approval_events_realtime.sql`), and History Detail additionally subscribes to it directly via a new `useLeaveApprovalEventsRealtime` hook (mirrors `useLeaveRequestRealtime`'s exact pattern, filtered to `leave_request_id=eq.<id>`) — the events timeline's freshness no longer depends on the coupling assumption above. No second realtime architecture, no duplicate subscription pattern — one additional subscription of the same established shape.
+
+Separately, `apps/parent-mobile/src/lib/queryClient.ts` now binds TanStack Query's `focusManager` to React Native's `AppState` (the library's own documented RN recipe) and enables `refetchOnWindowFocus` — previously a pure no-op on this platform with no `focusManager` binding. This adds an app-foreground catch-up refetch, independent of either realtime channel's own reconnect timing, for every screen in the app (not just History).
 
 ## 10. Security / Privacy
 

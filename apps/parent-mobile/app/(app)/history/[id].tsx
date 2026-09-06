@@ -19,6 +19,7 @@ import { useHistoryRecordEvents } from "@/src/features/approval-history/hooks/us
 import { buildTimelineFromEvents } from "@/src/features/approval-history/historyTimeline";
 import { useTheme } from "@/src/hooks/useTheme";
 import { useLeaveRequestRealtime } from "@/src/hooks/useLeaveRequestRealtime";
+import { useLeaveApprovalEventsRealtime } from "@/src/hooks/useLeaveApprovalEventsRealtime";
 
 /**
  * Approval History Detail (Phase 4 Prompt 10) — read-only. Reuses
@@ -49,6 +50,13 @@ export default function ApprovalHistoryDetail() {
     refresh();
     refreshEvents();
   }, `id=eq.${id}`);
+  // F-08: the leave_requests subscription above only catches an event
+  // insert when it happens to ride along with a status change (true of
+  // every event type this backend inserts today, but not guaranteed for
+  // every event type the schema defines). Subscribing to
+  // leave_approval_events directly closes that gap regardless of whether a
+  // future event ever arrives without an accompanying status change.
+  useLeaveApprovalEventsRealtime(refreshEvents, `leave_request_id=eq.${id}`);
 
   if (isLoading) {
     return (
