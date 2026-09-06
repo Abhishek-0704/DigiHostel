@@ -6,7 +6,7 @@ import {
 } from "../lib/queue/jobs.js";
 import type { NotificationRepository } from "../domain/notification/repository.js";
 import { NOTIFICATION_CLAIM_LEASE_MS, NOTIFICATION_REAP_BATCH_SIZE } from "../config/escalation.js";
-import { logger } from "../lib/logger.js";
+import { workerLogger as logger } from "../lib/logger.js";
 
 /**
  * F-03 remediation (PRR Phase 13 — notification crash/retry recovery).
@@ -76,6 +76,14 @@ export async function processReapJob(
 
   if (stale.length > 0) {
     logger.info({ count: stale.length }, "notification reaper: run complete");
+  } else {
+    // F-07: at `info` this would fire every minute forever for no
+    // operational benefit (this is not the process-liveness signal — that's
+    // /healthz — it only tells you this specific worker's schedule fired).
+    // At `debug` it's available on demand for exactly the question Phase 8
+    // asks ("is the queue processing jobs?") without adding to steady-state
+    // log volume.
+    logger.debug("notification reaper: run complete, no stale claims found");
   }
 }
 
@@ -93,7 +101,14 @@ export async function registerNotificationReaperWorker(
   scheduler: JobScheduler = new PgBossJobScheduler(),
 ): Promise<string> {
   const workerId = await boss.work(NOTIFICATION_REAP_QUEUE, async () => {
-    await processReapJob(repository, scheduler);
+    try {
+      await processReapJob(repository, scheduler);
+    } catch (err) {
+      // F-07: previously uncaught here, same gap as escalationWorker.ts had
+      // — a reaper failure produced no structured log line at all.
+      logger.error({ err }, "notification reaper: unexpected error");
+      throw err;
+    }
   });
   await boss.schedule(NOTIFICATION_REAP_QUEUE, "* * * * *");
   return workerId;

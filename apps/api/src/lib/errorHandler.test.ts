@@ -58,8 +58,13 @@ describe("global error handler (G-01)", () => {
 
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({
-      error: { code: "internal_error", message: "An unexpected error occurred." },
+      error: {
+        code: "internal_error",
+        message: "An unexpected error occurred.",
+        requestId: expect.any(String),
+      },
     });
+    expect(res.headers["x-request-id"]).toEqual(res.json().error.requestId);
     expect(res.body).not.toContain("postgres://");
     expect(res.body).not.toContain("s3cr3t");
     expect(res.body.toLowerCase()).not.toContain("connection to");
@@ -94,7 +99,11 @@ describe("global error handler (G-01)", () => {
 
     expect(res.statusCode).toBe(500);
     expect(res.json()).toEqual({
-      error: { code: "internal_error", message: "An unexpected error occurred." },
+      error: {
+        code: "internal_error",
+        message: "An unexpected error occurred.",
+        requestId: expect.any(String),
+      },
     });
     expect(res.body.toLowerCase()).not.toContain("constraint");
     expect(res.body.toLowerCase()).not.toContain("duplicate key");

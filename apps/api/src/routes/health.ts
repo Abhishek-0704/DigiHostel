@@ -26,7 +26,7 @@ export async function healthRoutes(app: FastifyInstance) {
     "/readyz",
     // Also rate-limit exempt, same reasoning as /healthz.
     { config: { rateLimit: false } },
-    async (_request, reply) => {
+    async (request, reply) => {
       // Readiness: "can this instance actually serve production traffic" —
       // checks the one dependency every route and every pg-boss worker
       // shares (Postgres). A trivial query, not a business query — cheap by
@@ -36,7 +36,12 @@ export async function healthRoutes(app: FastifyInstance) {
       try {
         await db.execute(sql`select 1`);
         return { status: "ok" as const };
-      } catch {
+      } catch (err) {
+        // F-07: previously silent — a 503 with no server-side log line gave
+        // an operator no way to distinguish "DB unreachable" from "DB slow"
+        // from any other cause without separately checking Postgres itself.
+        // Logged server-side only, never in the response.
+        request.log.warn({ err }, "readyz: dependency check failed");
         await reply.code(503).send({ status: "not_ready" as const });
       }
     },

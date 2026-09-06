@@ -32,6 +32,15 @@ describe("GET /api/v1/healthz", () => {
 
     await app.close();
   });
+
+  it("carries an x-request-id response header on every response, including 2xx (F-07)", async () => {
+    const app = await buildTestApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/healthz" });
+
+    expect(response.headers["x-request-id"]).toBeTruthy();
+
+    await app.close();
+  });
 });
 
 describe("GET /api/v1/readyz — unreachable database (mocked)", () => {

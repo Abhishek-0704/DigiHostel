@@ -10,6 +10,7 @@ import { ExpoPushSender } from "../lib/push/expoPush.js";
 import { registerEscalationWorker } from "./escalationWorker.js";
 import { registerNotificationWorker } from "./notificationWorker.js";
 import { registerNotificationReaperWorker } from "./notificationReaperWorker.js";
+import { workerLogger as logger } from "../lib/logger.js";
 
 /**
  * Starts pg-boss and registers both job handlers (ADR-011/ADR-017/ADR-018).
@@ -31,7 +32,19 @@ export async function startBackgroundWorkers(): Promise<void> {
   // sufficient here). Its own recurring schedule is registered inside
   // registerNotificationReaperWorker via pg-boss's native `schedule()`.
   await boss.createQueue(NOTIFICATION_REAP_QUEUE);
+
+  // F-07: each worker is logged individually with its own queue identity —
+  // previously only one blanket "background workers registered" line
+  // existed after all three succeeded, so a startup failure partway through
+  // (e.g. the second registerX call throws) gave no indication which
+  // specific worker never came up before index.ts's outer catch logged a
+  // generic "startup: failed, exiting".
   await registerEscalationWorker(new DrizzleLeaveRepository());
+  logger.info({ queue: ESCALATION_QUEUE }, "worker registered: escalation");
+
   await registerNotificationWorker(new DrizzleNotificationRepository(), new ExpoPushSender());
+  logger.info({ queue: NOTIFICATION_QUEUE }, "worker registered: notification delivery");
+
   await registerNotificationReaperWorker(new DrizzleNotificationRepository());
+  logger.info({ queue: NOTIFICATION_REAP_QUEUE }, "worker registered: notification reaper");
 }

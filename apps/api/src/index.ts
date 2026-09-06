@@ -5,7 +5,6 @@ import { stopQueue } from "./lib/queue/boss.js";
 import { logger } from "./lib/logger.js";
 
 const port = Number(process.env.PORT ?? 8080);
-const buildSha = process.env.BUILD_SHA ?? "unknown";
 
 // F-06 production hardening — an unrecoverable startup failure (e.g. the
 // database is unreachable, SUPABASE_URL is missing) must exit loudly with a
@@ -16,7 +15,9 @@ const buildSha = process.env.BUILD_SHA ?? "unknown";
 // stack trace instead of a queryable structured event — the one thing this
 // try/catch exists to fix.
 try {
-  logger.info({ buildSha, port }, "startup: beginning");
+  // buildSha is already in every log line via logger.ts's own `base` (F-07)
+  // — not repeated here, to avoid a duplicate key in the structured output.
+  logger.info({ port }, "startup: beginning");
 
   const app = await buildApp();
 

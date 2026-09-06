@@ -210,6 +210,8 @@ export type ErrorBodyError = {
   code: string;
   message: string;
   currentStatus?: LeaveRequestStatus;
+  /** Server-generated per-request identifier (F-07 production observability). Present on unexpected (5xx) and framework-rejected (4xx) errors; hand this value to support to correlate a client-visible failure with server-side logs. Not present on typed domain errors that routes map to a response themselves (e.g. leave-request 404/409). */
+  requestId?: string;
 };
 
 export interface ErrorBody {

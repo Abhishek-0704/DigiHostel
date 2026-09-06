@@ -29,6 +29,20 @@
       "when": 1788618868947,
       "tag": "0004_f03_notification_claim_lease",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788697597895,
+      "tag": "0005_f05_security_incidents_hostel_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788699819876,
+      "tag": "0006_f05a_security_incidents_reception_scope",
+      "breakpoints": true
     }
   ]
 }

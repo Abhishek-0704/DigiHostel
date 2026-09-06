@@ -33,19 +33,34 @@ export function createErrorHandler() {
       typeof error.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 500;
 
     if (isFrameworkClientError) {
+      // Expected client-side rejection (malformed body, bad content-type,
+      // etc.) — logged at `info`, not `error` (F-07): this is normal
+      // traffic, not an operational incident, and must not carry the same
+      // severity as an unhandled exception or a database failure below.
       request.log.info(
         { code: error.code, statusCode: error.statusCode },
         "request rejected before reaching a route handler",
       );
-      await reply
-        .code(error.statusCode!)
-        .send({ error: { code: error.code ?? "bad_request", message: error.message } });
+      await reply.code(error.statusCode!).send({
+        error: { code: error.code ?? "bad_request", message: error.message, requestId: request.id },
+      });
       return;
     }
 
+    // Unexpected — a bug, a raw database error, or anything no route's own
+    // typed error mapping caught. `error` severity is deliberate: this is
+    // the operational-incident case Phase 6 distinguishes from the 4xx path
+    // above. `requestId` in the body (F-07) lets a client-visible failure be
+    // handed to an operator and looked up by the same value `request.log`
+    // already stamped on every log line for this request — the response
+    // never includes the error's own message or stack.
     request.log.error({ err: error }, "unhandled error");
-    await reply
-      .code(500)
-      .send({ error: { code: "internal_error", message: "An unexpected error occurred." } });
+    await reply.code(500).send({
+      error: {
+        code: "internal_error",
+        message: "An unexpected error occurred.",
+        requestId: request.id,
+      },
+    });
   };
 }

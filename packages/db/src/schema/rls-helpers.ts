@@ -45,3 +45,10 @@ export const isParentLinkedToStudent = (studentId: AnyPgColumn | SQL) =>
   sql`public.is_parent_linked_to_student(${studentId})`;
 export const isHostelAdminForStudent = (studentId: AnyPgColumn | SQL) =>
   sql`public.is_hostel_admin_for_student(${studentId})`;
+// F-05A: reception_warden is hostel-scoped, same shape as hostel_admin above
+// (docs/rls-policy-matrix.md), but security_incidents has no hostel_id
+// column of its own — same join-through-students requirement that forced
+// isHostelAdminForStudent to exist as a SECURITY DEFINER function rather
+// than an inline subquery.
+export const isReceptionForStudent = (studentId: AnyPgColumn | SQL) =>
+  sql`public.is_reception_for_student(${studentId})`;

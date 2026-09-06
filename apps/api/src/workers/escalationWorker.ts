@@ -1,7 +1,7 @@
 import { boss } from "../lib/queue/boss.js";
 import { ESCALATION_QUEUE, type EscalationJobPayload } from "../lib/queue/jobs.js";
 import type { LeaveRepository } from "../domain/leave/repository.js";
-import { logger } from "../lib/logger.js";
+import { workerLogger as logger } from "../lib/logger.js";
 
 /**
  * `leave-escalation-stage-evaluate` (ADR-017's Job Design, corrected by
@@ -38,7 +38,20 @@ export async function processEscalationJob(
 export function registerEscalationWorker(repository: LeaveRepository): Promise<string> {
   return boss.work<EscalationJobPayload>(ESCALATION_QUEUE, async (jobs) => {
     for (const job of jobs) {
-      await processEscalationJob(job.data, repository);
+      try {
+        await processEscalationJob(job.data, repository);
+      } catch (err) {
+        // F-07: previously uncaught here — pg-boss records the failure in
+        // its own job table either way, but this call site produced no
+        // structured log line at all when a job threw, matching the
+        // try/catch shape notificationWorker.ts already uses. IDs only,
+        // never a full payload dump (there's nothing else on this payload).
+        logger.error(
+          { err, jobId: job.id, leaveRequestId: job.data.leaveRequestId },
+          "escalation worker: unexpected error",
+        );
+        throw err; // let pg-boss's own retry/backoff handle it
+      }
     }
   });
 }

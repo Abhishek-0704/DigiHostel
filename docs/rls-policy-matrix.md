@@ -150,8 +150,10 @@ Legend: ✅ allowed (with condition noted), ❌ denied, — not applicable to th
 | anonymous | ❌ | ❌ | ❌ | ❌ | |
 | student (self) | ✅ own, **excluding raw geolocation columns** (column-level restriction via a view or column privileges, not RLS row-filtering) | ❌ | ❌ | ❌ | `student_id = <caller's students.id>` |
 | parent/guardian | ✅ linked students', same column restriction | ❌ | ❌ | ❌ | join through `parent_student_relationships` |
-| reception / library_incharge | ✅ own-hostel/all respectively, **including geolocation while incident is open** (operational necessity) | ✅ (`missed_checkpoint` auto-trigger path via Fastify) | ✅ (`status` transitions) | ❌ | role claim + hostel scope |
-| hostel_admin / super_admin | ✅ full access | ✅ | ✅ | ❌ | role claim |
+| reception | ✅ own-hostel only, **including geolocation while incident is open** (operational necessity) | ✅ own-hostel (`missed_checkpoint` auto-trigger path via Fastify) | ✅ own-hostel (`status` transitions) | ❌ | role claim + hostel scope (`is_reception_for_student`, F-05A remediation — was role claim alone (combined with library_incharge in one policy), a cross-hostel IDOR; see `supabase/tests/database/14_f05a_security_incidents_reception_scope.sql`) |
+| library_incharge | ✅ all, **including geolocation while incident is open** (operational necessity) | ✅ (`missed_checkpoint` auto-trigger path via Fastify) | ✅ (`status` transitions) | ❌ | role claim only — intentionally global, unaffected by F-05A |
+| hostel_admin | ✅ own-hostel students' incidents only | ✅ own-hostel | ✅ own-hostel | ❌ | role claim + hostel scope (`is_hostel_admin_for_student`, F-05 remediation — was role claim alone, a cross-hostel IDOR; see `supabase/tests/database/13_f05_security_incidents_hostel_scope.sql`) |
+| super_admin | ✅ full access | ✅ | ✅ | ❌ | role claim |
 
 ---
 

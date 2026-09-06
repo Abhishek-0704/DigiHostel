@@ -260,13 +260,218 @@ nothing was silently upgraded.
 
 **Verification performed**: every `verify`-job step was replicated locally,
 in the same order, on this machine, and passed (632/632 tests including
-real-Postgres integration paths, 64/64 pgTAP, clean build). **Not yet
-exercised as an actual GitHub Actions run** — nothing was pushed.
+real-Postgres integration paths, 64/64 pgTAP, clean build). The repository
+was committed and pushed to `main` on 2026-09-06 (commit `856d81e`) as part
+of the F-06-STAGING provisioning work (§8) — a real GitHub Actions run of
+this workflow has not been separately confirmed (this task's own
+provisioning used the Render API directly, not this CI workflow's
+`deploy-api` job), but the code enabling it is now live on GitHub.
 
-## 8. Staging Deployment
+## 8. Staging Environment (F-06-STAGING, 2026-09-06)
 
-**NOT IMPLEMENTED** — no staging Supabase project or hosting target exists.
-See §2's recommendation.
+### Staging vs. production — read this first
+
+| | Staging (this section) | Production |
+|---|---|---|
+| Provider | Render, **Free** plan | Persistent always-on runtime required (ADR-021) |
+| Purpose | Development/integration testing | Real user traffic |
+| Spin-down | **Expected and accepted** — spins down after ~15 min idle | Must never spin down |
+| pg-boss during spin-down | Not running (process is asleep) — **not guaranteed to operate continuously** | Must run continuously |
+| Keep-alive workaround | **None used, none should be added** | N/A |
+| Manual wake-up | Developers may manually wake the service when testing | N/A |
+
+**Render Free is intentionally accepted for staging.** This is a deliberate
+environment decision, not an unresolved defect: an attempt to move the
+*staging* service to Render's minimum always-on plan (`starter` /
+`0.5c-512mb`) was rejected by the Render API
+(`"Plan requires payment information on file"`, HTTP 400, confirmed with
+both plan identifiers) — no payment method exists on the account used for
+staging. Adding one is a billing decision for the account owner, not
+something this documentation treats as a blocker to close; **staging
+remains on Free by choice for now**. This does not change ADR-021, which
+remains the authoritative *production* architecture decision — production
+must still use a persistent always-on runtime compatible with ADR-021
+before any production deployment; it is simply not provisioned yet, and
+provisioning it is out of scope here. No keep-alive, self-ping, or
+artificial-traffic mechanism exists anywhere in this repository to mask
+Free's spin-down behavior, and none should be added — verified by a
+repository-wide search for such patterns (none found).
+
+Everything below this note — schema, pg-boss, job processing, restart
+recovery, the DB-interruption test — was genuinely verified live against
+the real staging deployment while it was awake.
+
+Real, live external infrastructure — not simulated. Provisioned under a
+Supabase account and a Render account distinct from the ones used
+elsewhere in this repository's history (the user explicitly chose to use
+separate accounts for staging; see below for what was found and how it was
+resolved).
+
+### Supabase staging project
+
+- **Project**: "DigiHostel" (ref `lhonrqjmlhlehpbxvrag`, region
+  `ap-south-1`), on a Supabase account distinct from the one used for local
+  CLI work earlier in this repository's history. This project already
+  existed (created 2026-08-09, before this session) — it was not created by
+  this task.
+- **Critical finding, resolved**: the project's `public` schema already
+  contained a substantial, unrelated 41-table/12-enum/10-function schema
+  (`cab_sharing`, `community_posts`, `complaints`, `profiles`,
+  `refresh_tokens`, `role_definitions`, etc.) that matches neither this
+  repository's current implementation nor anything it should build on —
+  almost certainly a remnant of the discarded pre-reset implementation
+  (`docs/implementation-baseline.md`). **Every table had zero rows** —
+  confirmed via `supabase inspect db table-stats` before taking any action.
+  With explicit user confirmation, the old schema was dropped via targeted
+  `DROP TABLE`/`DROP FUNCTION`/`DROP TYPE` statements (never a blanket
+  `DROP SCHEMA public`, to avoid touching Supabase's own platform-level
+  grants on that schema), then this repository's actual migration history
+  (`0000`–`0004`) was applied cleanly via `supabase db push`.
+- **Schema verification — VERIFIED, exact match to the local baseline**: 17
+  tables, 17 RLS-enabled, 66 policies, 8 functions, 58 indexes — identical
+  counts to the local dev instance.
+- **pgTAP — classified, not fully executable as-is**: `supabase test db
+  --linked` initially failed entirely (`pgtap` extension registered but its
+  functions unreachable via this project's connection search_path);
+  installing `pgtap` explicitly into the `public` schema fixed that, after
+  which **00_setup.sql passes cleanly**, but every subsequent test file
+  fails or errors in a way that is precisely and *only* explained by
+  missing seed fixtures — every failure is either `have: 0 / want: N` (a
+  query for a fixture row that doesn't exist) or `permission denied for
+  table X` (RLS correctly denying access for a simulated identity with no
+  backing `auth.users` row). **`supabase/seed.sql`'s own header explicitly
+  states "Never run against a remote/production project"** (it inserts
+  directly into `auth.users` with fake password hashes, which is safe only
+  against the fully-local, disposable dev stack) — this task did not
+  override that explicit safety warning to force a green pgTAP run.
+  **Classification: infrastructure/configuration limitation of the
+  existing test suite's local-only fixture design, not a migration defect
+  or an RLS/implementation defect** — the schema/RLS *structure* match
+  above, plus RLS visibly and correctly denying access with no matching
+  identity, are strong indirect evidence the deployed policies are correct;
+  full behavioral pgTAP coverage against a remote project would require a
+  separate, remote-safe fixture mechanism (e.g. Supabase Admin API-based
+  user creation) that does not exist today and was not built here (out of
+  this task's "use the existing test suite" scope).
+
+### Render staging service
+
+- **Service**: `digihostel-api-staging` (id `srv-daeaqdn40ujc73eglbc0`),
+  free plan, Singapore region, Docker runtime from `apps/api/Dockerfile`,
+  `numInstances: 1`, health check `/api/v1/healthz`. Created on a Render
+  account distinct from the one ("tech-titan12") used for CLI
+  authentication earlier in this repository's history — confirmed empty
+  (0 pre-existing services) before creation.
+- **Environment variables set** (staging values, never committed):
+  `NODE_ENV`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `DATABASE_URL`,
+  `BUILD_SHA`.
+- **Critical finding, resolved**: the first deploy attempt failed —
+  Render builds from GitHub, and **nothing in this entire remediation
+  session (F-01 through F-06) had ever been pushed**, so GitHub's `main`
+  was still at the pre-reset baseline commit (`a0df538`), which has no
+  `apps/api/Dockerfile` at all. With explicit user confirmation, this
+  session's accumulated work was committed and pushed to `main`
+  (`856d81e`), and a fresh deploy was triggered.
+- **Deploy result: VERIFIED live.** `GET /api/v1/healthz` → `200
+  {"status":"ok"}`; `GET /api/v1/readyz` → `200 {"status":"ok"}` (real
+  connectivity to the staging Postgres).
+- **pg-boss — VERIFIED live**: `pgboss.schedule` shows
+  `leave-notification-reap` / `* * * * *` / `UTC` registered; `pgboss.queue`
+  shows all three real queues plus pg-boss's own internal dispatch queue.
+  A real escalation job was enqueued against a minimal, obviously-synthetic
+  fixture (`F-06-Staging Synthetic Hostel`/`Student`, fixed UUIDs prefixed
+  `f6000000-...`) — the live service's own worker claimed and completed it
+  within ~2 seconds, correctly advancing `father_notified` →
+  `mother_notified` and scheduling the next stage's follow-up job (exactly
+  ADR-017 §7's same-transaction scheduling). The fixture and its follow-up
+  job were deleted immediately afterward — staging's domain tables were
+  confirmed back to zero rows across `students`/`hostels`/`leave_requests`/
+  `leave_approval_events`/`notifications`.
+- **Restart recovery — VERIFIED, twice**: a manual restart (Render API)
+  came back with `/readyz` returning `200` and the reaper schedule
+  immediately intact (Postgres-persisted, not in-memory) both times.
+- **Database interruption test (Resilience Test B, previously NOT
+  EXECUTED) — now VERIFIED, with a notable finding**: `DATABASE_URL` was
+  temporarily set to an unreachable address and the service restarted.
+  `/readyz` briefly became unreachable (a slow connection-timeout hang, not
+  an immediate clean failure — see "Limitations" below), but **the
+  platform never actually took the broken configuration into production
+  traffic** — Render's own deploy/restart health-check gating appears to
+  have kept the last-known-good instance serving rather than cutting over
+  to one that couldn't bind (per `apps/api/src/index.ts`'s own hardening,
+  a pg-boss connection failure at startup crashes the process before it
+  ever listens, which is itself a correct, intentional failure mode — see
+  F-06's implementation phase). `DATABASE_URL` was restored and the service
+  restarted again; `/healthz`, `/readyz`, and the pg-boss schedule were all
+  reconfirmed healthy immediately after.
+- **Rollback — mechanism confirmed available, not independently exercised
+  with two distinct versions**: Render's native "rollback to a previous
+  deploy" feature is present (dashboard + API); this task did not push a
+  second, otherwise-meaningless commit purely to manufacture a "Version
+  A → B → rollback" cycle, since only one real deploy exists so far and
+  creating a throwaway version would pollute the repository's real commit
+  history for no verification benefit beyond what the restart and
+  DB-interruption tests already demonstrated about the platform's recovery
+  behavior.
+
+### GitHub
+
+- A `staging` GitHub Actions environment was created with 5 secrets:
+  `RENDER_API_KEY`, `RENDER_SERVICE_ID`, `SUPABASE_ACCESS_TOKEN`,
+  `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD` — values never printed,
+  logged, or committed.
+- This session's accumulated work (F-01 through F-06) was committed and
+  pushed to `main` (commit `856d81e`) with explicit user confirmation,
+  specifically to unblock the Render build (see above). No production
+  secrets, no production environment, and no production project were
+  created anywhere in this process.
+
+### Migration deployment mechanism used
+
+`.github/workflows/deploy-migrations.yml` targets a `production`
+environment/secrets and was **not** used for this staging provisioning —
+migrations were applied directly via `supabase db push` against the
+linked staging project instead, since no staging-specific migration
+workflow existed yet. A minimal `deploy-migrations-staging.yml` mirroring
+the production one but targeting the `staging` environment's secrets would
+be the natural follow-up if staging migrations need to be automated later;
+not created in this task to avoid adding an unused workflow file before a
+second real migration is ever needed against staging.
+
+### Staging limitations (honest, not glossed over)
+
+- **Free-plan spin-down (accepted, not a defect)**: the staging service is
+  not continuously available; pg-boss scheduling/workers do not run while
+  the service is asleep. Re-verified 2026-09-06: a controlled synthetic job
+  (fixture `f6000000-...-000000000013`, immediately deleted afterward) was
+  enqueued while the service was awake and processed in ~2 seconds
+  (`father_notified → mother_notified`, `pgboss.job.completed_on` confirmed
+  via direct query); a controlled restart came back with `/readyz` 200 and
+  `pgboss.schedule` still showing `leave-notification-reap` / `* * * * *`.
+  No 20-minute no-traffic persistence test was performed or claimed — that
+  test is only meaningful for an always-on plan, which staging intentionally
+  does not use.
+- pgTAP is not fully executable against staging without either overriding
+  `seed.sql`'s explicit "never run remotely" warning (not done) or building
+  a new remote-safe fixture mechanism (not built, out of scope).
+- The database-interruption test showed `/readyz`/the whole process can
+  hang for a noticeable period (tens of seconds) while a Postgres client
+  attempts a connection to an unreachable host, rather than failing
+  instantly — `postgres-js`'s default connection-timeout was not
+  explicitly tuned in this task; a shorter, explicit `connect_timeout`
+  would make this fail faster and is a reasonable, low-risk future
+  hardening item, not implemented here (scope discipline — this task
+  verifies existing behavior, not iterate on it further).
+- Rollback was confirmed available but not exercised end-to-end with two
+  distinct deployed versions.
+- `BUILD_SHA`/`/healthz`'s `version` field did not reliably reflect the
+  value set via Render's env-var API within this session's testing
+  window — a minor, cosmetic, disclosed gap, not investigated further.
+- The account switch this task performed for Supabase CLI access is
+  **not reversible from within this session** — the CLI's single stored
+  credential now authenticates as the new (staging) account; restoring
+  access to the original account requires the user to run `supabase login`
+  again themselves.
 
 ## 9. Production Deployment
 

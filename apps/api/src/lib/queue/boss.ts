@@ -1,5 +1,5 @@
 import { PgBoss } from "pg-boss";
-import { logger } from "../logger.js";
+import { workerLogger as logger } from "../logger.js";
 
 /**
  * pg-boss singleton (ADR-011 — Postgres-backed background jobs, no Redis),
@@ -21,10 +21,12 @@ export async function startQueue(): Promise<void> {
   if (started) return;
   await boss.start();
   started = true;
+  logger.info("pg-boss: started");
 }
 
 export async function stopQueue(): Promise<void> {
   if (!started) return;
   await boss.stop({ graceful: true });
   started = false;
+  logger.info("pg-boss: stopped");
 }

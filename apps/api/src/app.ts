@@ -29,6 +29,23 @@ export interface BuildAppOptions {
 export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({ loggerInstance: logger });
 
+  // F-07 (production observability): Fastify already assigns every request
+  // a request ID (its own internal sequential generator — `requestIdHeader`
+  // is never set anywhere in this codebase, so Fastify's documented default
+  // of `false` applies and no client-supplied header is ever trusted or
+  // parsed for this; verified against the installed Fastify version's own
+  // config defaults, not assumed) and threads it through every
+  // `request.log` call automatically. What was missing is the other half:
+  // the ID never reached the client at all, so a user reporting "I got an
+  // error" had nothing to hand support that could be correlated back to a
+  // specific server-side log line. This header is the minimum safe
+  // mechanism — it exposes only an opaque per-request counter, nothing
+  // sensitive, and requires no new dependency.
+  app.addHook("onSend", async (request, reply, payload) => {
+    reply.header("x-request-id", request.id);
+    return payload;
+  });
+
   // Global error handler (G-01) — must be set before any route can run, so
   // every unexpected exception (from any route) is sanitized the same way.
   app.setErrorHandler(createErrorHandler());

@@ -6,9 +6,9 @@ import { students, parentStudentRelationships } from "./identity.js";
 import {
   callerParentId,
   callerStudentId,
-  isReception,
   isLibraryIncharge,
-  isHostelAdmin,
+  isHostelAdminForStudent,
+  isReceptionForStudent,
   isSuperAdmin,
 } from "./rls-helpers.js";
 
@@ -75,17 +75,37 @@ export const securityIncidents = pgTable(
       to: authenticatedRole,
       using: sql`exists (select 1 from ${parentStudentRelationships} psr where psr.student_id = ${t.studentId} and psr.parent_id = ${callerParentId})`,
     }),
-    pgPolicy("security_incidents_all_reception_library", {
+    // F-05A remediation: was one combined policy, `isReception or
+    // isLibraryIncharge` — a pure role-membership OR with no hostel-scope
+    // join for reception, giving any reception_warden full cross-hostel CRUD
+    // (docs/rls-policy-matrix.md documents reception as own-hostel scoped,
+    // library_incharge as intentionally global). Split into two policies,
+    // matching the existing students-table precedent
+    // (students_select_own_hostel_reception / students_select_library_incharge)
+    // for these same two roles — library_incharge's global access is
+    // unchanged.
+    pgPolicy("security_incidents_all_reception", {
       for: "all",
       to: authenticatedRole,
-      using: sql`${isReception} or ${isLibraryIncharge}`,
-      withCheck: sql`${isReception} or ${isLibraryIncharge}`,
+      using: isReceptionForStudent(t.studentId),
+      withCheck: isReceptionForStudent(t.studentId),
     }),
+    pgPolicy("security_incidents_all_library", {
+      for: "all",
+      to: authenticatedRole,
+      using: isLibraryIncharge,
+      withCheck: isLibraryIncharge,
+    }),
+    // F-05 remediation: was `isHostelAdmin` (pure role check, no hostel-scope
+    // join) — any hostel_admin, from any hostel, had full CRUD over every
+    // student's security incidents. isHostelAdminForStudent(t.studentId) is
+    // the same SECURITY DEFINER helper already used correctly on
+    // parent_student_relationships (psr_all_hostel_admin, identity.ts).
     pgPolicy("security_incidents_all_hostel_admin", {
       for: "all",
       to: authenticatedRole,
-      using: isHostelAdmin,
-      withCheck: isHostelAdmin,
+      using: isHostelAdminForStudent(t.studentId),
+      withCheck: isHostelAdminForStudent(t.studentId),
     }),
     pgPolicy("security_incidents_all_super_admin", {
       for: "all",

@@ -20,7 +20,9 @@ values
   ('00000000-0000-0000-0000-000000000000', '77777777-7777-7777-7777-777777777777', 'authenticated', 'authenticated', 'library1@example.test', crypt('test-password', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', false, '', '', '', ''),
   ('00000000-0000-0000-0000-000000000000', '88888888-8888-8888-8888-888888888888', 'authenticated', 'authenticated', 'hosteladmin1@example.test', crypt('test-password', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', false, '', '', '', ''),
   ('00000000-0000-0000-0000-000000000000', '99999999-9999-9999-9999-999999999999', 'authenticated', 'authenticated', 'superadmin1@example.test', crypt('test-password', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', false, '', '', '', ''),
-  ('00000000-0000-0000-0000-000000000000', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'authenticated', 'authenticated', 'guardian-of-student2@example.test', crypt('test-password', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', false, '', '', '', '');
+  ('00000000-0000-0000-0000-000000000000', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'authenticated', 'authenticated', 'guardian-of-student2@example.test', crypt('test-password', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', false, '', '', '', ''),
+  ('00000000-0000-0000-0000-000000000000', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'authenticated', 'authenticated', 'hosteladmin2@example.test', crypt('test-password', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', false, '', '', '', ''),
+  ('00000000-0000-0000-0000-000000000000', 'dddddddd-dddd-dddd-dddd-dddddddddddd', 'authenticated', 'authenticated', 'reception2@example.test', crypt('test-password', gen_salt('bf')), now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', false, '', '', '', '');
 
 -- === Hostel domain ===
 insert into hostels (id, name) values
@@ -51,7 +53,15 @@ insert into staff (id, auth_user_id, full_name, role, hostel_id) values
   ('e0000000-0000-0000-0000-000000000001', '66666666-6666-6666-6666-666666666666', 'Test Reception Warden', 'reception_warden', 'a0000000-0000-0000-0000-000000000001'),
   ('e0000000-0000-0000-0000-000000000002', '77777777-7777-7777-7777-777777777777', 'Test Library Incharge', 'library_incharge', null),
   ('e0000000-0000-0000-0000-000000000003', '88888888-8888-8888-8888-888888888888', 'Test Hostel Admin', 'hostel_admin', 'a0000000-0000-0000-0000-000000000001'),
-  ('e0000000-0000-0000-0000-000000000004', '99999999-9999-9999-9999-999999999999', 'Test Super Admin', 'super_admin', null);
+  ('e0000000-0000-0000-0000-000000000004', '99999999-9999-9999-9999-999999999999', 'Test Super Admin', 'super_admin', null),
+  -- hostel_admin2: scoped to Utkal (student2's hostel), NOT Kalinga — used by
+  -- F-05's cross-hostel security_incidents isolation tests (docs/adr and
+  -- supabase/tests/database/13_f05_security_incidents_hostel_scope.sql).
+  ('e0000000-0000-0000-0000-000000000005', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'Test Hostel Admin Two', 'hostel_admin', 'a0000000-0000-0000-0000-000000000002'),
+  -- reception2 ("Reception B"): scoped to Utkal, NOT Kalinga — used by F-05A's
+  -- cross-hostel security_incidents reception-isolation tests
+  -- (supabase/tests/database/14_f05a_security_incidents_reception_scope.sql).
+  ('e0000000-0000-0000-0000-000000000006', 'dddddddd-dddd-dddd-dddd-dddddddddddd', 'Test Reception Warden Two', 'reception_warden', 'a0000000-0000-0000-0000-000000000002');
 
 insert into parent_student_relationships (parent_id, student_id, relationship_type, escalation_order) values
   ('d0000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000001', 'father', 1),
@@ -80,6 +90,15 @@ insert into leave_requests (id, student_id, reason, start_date, end_date, status
 
 insert into leave_approval_events (id, leave_request_id, event_type, actor_parent_id, biometric_confirmed, occurred_at) values
   ('11000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'notified', null, false, now());
+
+-- === Security incident domain ===
+-- incident1: student1's incident, at Kalinga (Hostel A).
+-- incident2: student2's incident, at Utkal (Hostel B) — used to prove a
+-- Kalinga-scoped hostel_admin cannot read/write a Utkal student's incident,
+-- and vice versa (F-05 cross-hostel isolation).
+insert into security_incidents (id, student_id, incident_type, status) values
+  ('12000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000001', 'missed_checkpoint', 'open'),
+  ('12000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-000000000002', 'manual_flag', 'open');
 
 -- === Audit domain ===
 -- Inserted here as the seed script's postgres/superuser connection, which

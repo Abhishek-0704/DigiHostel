@@ -1,0 +1,1 @@
+ALTER POLICY "security_incidents_all_hostel_admin" ON "security_incidents" TO authenticated USING (public.is_hostel_admin_for_student("security_incidents"."student_id")) WITH CHECK (public.is_hostel_admin_for_student("security_incidents"."student_id"));

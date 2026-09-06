@@ -9,7 +9,7 @@ import type { NotificationRepository } from "../domain/notification/repository.j
 import type { PushSender } from "../domain/notification/types.js";
 import { buildLeaveNotificationContent } from "./notificationContent.js";
 import { NOTIFICATION_MAX_RETRIES, NOTIFICATION_RETRY_DELAYS_MS } from "../config/escalation.js";
-import { logger } from "../lib/logger.js";
+import { workerLogger as logger } from "../lib/logger.js";
 
 /**
  * One attempt at delivering one already-identified logical notification
@@ -46,6 +46,10 @@ async function attemptDelivery(
   if (!student) {
     // Leave request no longer resolvable (should not happen in practice) —
     // nothing sensible to send; fail this attempt rather than guess content.
+    logger.warn(
+      { notificationId: claimed.id, leaveRequestId },
+      "notification: leave request no longer resolvable, failing attempt",
+    );
     await repo.recordOutcome(claimed.id, "failed");
     return;
   }
@@ -54,7 +58,13 @@ async function attemptDelivery(
   const content = buildLeaveNotificationContent(student);
   const result = await sender.send(tokens, content.title, content.body);
 
+  // F-07: identifiers and outcome only — never token contents or message
+  // text (content.title/content.body are never passed to the logger).
   if (result.outcome === "accepted") {
+    logger.info(
+      { notificationId: claimed.id, leaveRequestId, stage: claimed.stage },
+      "notification: delivered",
+    );
     await repo.recordOutcome(claimed.id, "sent");
     return;
   }
@@ -63,11 +73,32 @@ async function attemptDelivery(
   // feed the same retry path, up to the same bound.
   const attemptsMade = claimed.retryCount; // already incremented by claimAttempt
   if (attemptsMade > NOTIFICATION_MAX_RETRIES) {
+    logger.warn(
+      {
+        notificationId: claimed.id,
+        leaveRequestId,
+        stage: claimed.stage,
+        attemptsMade,
+        outcome: result.outcome,
+      },
+      "notification: retries exhausted, permanently failed",
+    );
     await repo.recordOutcome(claimed.id, "failed");
     return;
   }
 
   const delayMs = NOTIFICATION_RETRY_DELAYS_MS[attemptsMade - 1];
+  logger.info(
+    {
+      notificationId: claimed.id,
+      leaveRequestId,
+      stage: claimed.stage,
+      attemptsMade,
+      outcome: result.outcome,
+      delayMs,
+    },
+    "notification: attempt failed, retry scheduled",
+  );
   await scheduler.enqueueNotificationJob(
     {
       leaveRequestId,
