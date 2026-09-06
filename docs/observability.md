@@ -265,41 +265,126 @@ not to.
 
 ## 9. Staging vs. production boundary
 
-- **What is live-verified on Render staging today**: the *pre-F-07*
-  baseline only — `/healthz`/`/readyz` respond correctly (re-confirmed
-  live during this task), Fastify's own structured request logging and
-  pg-boss job processing were already proven end-to-end in F-06's own
-  verification. **The F-07 code changes in this task (redaction, the
-  `x-request-id` header/body field, per-worker registration logging, the
-  new job-failure/notification-outcome/reaper-tick logs) have NOT been
-  deployed to Render staging** — deploying requires pushing to the
-  connected GitHub branch, which is outside this task's authorization (no
-  commit/push was made, per explicit instruction). Confirmed directly: a
-  live `curl` against the staging `/healthz` during this task returned no
-  `x-request-id` header, proving the currently-running instance predates
-  this change.
-- **What is verified**, instead, against a **real local runtime** (not a
-  mock): the actual compiled `apps/api/dist/index.js`, against the real
-  local Supabase/Postgres/pg-boss stack — startup/worker-registration logs,
-  `/healthz`/`/readyz` with the new headers, a real 4xx with `reqId`
-  correlation, and a real pg-boss job execution with the new structured
-  worker log line. This is genuine evidence, not a fabricated claim, but it
-  is **local, not staging or production** evidence.
-- **PRODUCTION BLOCKER — staging limitation / infrastructure decision
-  required**: F-07's code is only verifiable end-to-end on Render/Supabase
-  once deployed; that deployment is a deliberate, separate, authorization-
-  gated action (a `git push` to `main`), not performed here. Supabase's own
-  Reports/Log Drains long-term-retention limitations (§8) are a genuine,
-  separate, plan-tier constraint that upgrading Supabase would resolve —
-  not attempted here, per this task's explicit "do not upgrade" instruction.
+**Updated by F-07B (2026-09-06): F-07's code is now deployed to and
+live-verified on Render staging.** The section below reflects that; see
+`docs/current-state.md`'s F-07 entry for the full evidence trail.
 
-## 10. What this task did not do
+- **Deployment**: commit `84ac504` (F-05/F-05A/F-07) was pushed to `main`.
+  Deploying it surfaced a genuine, pre-existing, unrelated defect —
+  `.github/workflows/ci.yml`'s `Verify` job had never once succeeded on any
+  push to this repository (confirmed against both this push and the
+  original F-01–F-06 push): `supabase status -o env`'s quoted output
+  (`DB_URL="postgresql://..."`) was appended to `$GITHUB_ENV` verbatim,
+  which does not strip shell-style quoting, so `SUPABASE_URL` contained
+  literal quote characters and failed `supabase-js`'s own URL validation.
+  Since `deploy-api` has `needs: verify`, this also meant Render's deploy
+  hook had never once been triggered by this pipeline for any prior push —
+  fixed in commit `3c9c602`. Separately, `RENDER_DEPLOY_HOOK_URL` had never
+  been configured as a GitHub Actions secret at all (the currently-running
+  staging service was originally deployed via a one-time manual Render API
+  call during F-06-STAGING, outside this pipeline) — the user supplied the
+  deploy hook URL for this task, it was set as a GitHub secret via `gh
+  secret set` (handled as a secret throughout, never displayed), and the
+  failed `Deploy apps/api` job was re-run successfully.
+- **Live-verified on Render staging** (this task, real HTTP requests
+  against `https://digihostel-api-staging.onrender.com`, not local):
+  `/healthz` and `/readyz` both 200; every response (2xx/4xx/404) carries a
+  distinct `x-request-id` header; a live malformed-JSON 400 carried
+  `requestId` in both the header and the body, matching exactly; a live
+  401 (typed domain error) carried the header but not a body `requestId`,
+  matching the documented, deliberate distinction in §2. Rate-limit headers
+  observed and correctly tiered (300/min general, 30/min on the
+  leave-requests POST route), unaffected by this task.
+- **Worker/pg-boss observability, live-verified via direct read-only SQL**
+  against the real staging Postgres (`supabase db query --linked` /
+  `supabase inspect db table-stats --linked` — Management-API-backed, no
+  raw `DATABASE_URL` needed or used): `pgboss.job_common` row count and
+  `seq_scans` measurably increased between two checks minutes apart;
+  querying by queue name directly showed `leave-notification-reap` with
+  115 executions, the most recent **seconds before the query itself**,
+  and `230 completed / 1 created / 0 failed` across the reaper's and
+  pg-boss's own internal maintenance jobs — direct, current, real evidence
+  the reaper's `* * * * *` schedule and the core pg-boss engine are both
+  alive and executing successfully on the newly-deployed instance. The
+  application-specific `leave-escalation-stage-evaluate` /
+  `leave-notification-deliver` queues show only historical rows from an
+  earlier session (last activity hours prior) — correctly explained by
+  staging's `leave_requests` table having zero rows (`seed.sql` is never
+  run remotely, by its own explicit safety header), not a worker defect.
+- **What was deliberately NOT done, and why**: a synthetic job was not
+  hand-enqueued into staging's `pgboss.job` table this task. The
+  established, safe F-03/F-06 mechanism enqueues via pg-boss's own
+  `.send()` client against the real `DATABASE_URL`; that connection string
+  was not available in this session (only a narrower deploy-hook credential
+  was provided). Hand-crafting a raw SQL `INSERT` replicating pg-boss's
+  internal 29-column job-insert shape against a live, shared database was
+  considered and rejected as exactly the kind of ad-hoc, unestablished
+  mechanism this task's own instructions warn against — the reaper's own
+  naturally-recurring schedule (above) provided equivalent, safer, real
+  evidence instead, without requiring any write action at all.
+- **Render log-stream access**: not available in this session (only a
+  deploy-trigger credential was provided, not a full API key or dashboard
+  session). Client-side response evidence above (matching `x-request-id`
+  values across the header and body) proves *internal* correlation
+  consistency; independently confirming the *same* ID against Render's own
+  server-side log line was not possible without log-read access. This is
+  reported honestly as a genuine evidence gap, not glossed over.
+- **A controlled 5xx was not attempted against staging** — no safe,
+  non-destructive mechanism exists to trigger one in this application (every
+  intentionally-reachable failure mode maps to a typed 4xx); the existing
+  vitest suite's real-`Error`-with-embedded-connection-string test remains
+  the authoritative evidence for the 500 path's redaction/correlation
+  behavior.
+- **A dedicated restart/redeploy cycle was not performed separately** —
+  the deployment itself already constituted one (old container serving
+  pre-F-07 code stopped, new container started), and `/readyz` returning
+  200 immediately after confirms the new process's startup sequence
+  (`buildApp()` succeeding, therefore Postgres connectivity; pg-boss's own
+  maintenance loop firing, therefore `startBackgroundWorkers()` succeeding)
+  completed correctly — inferred from external behavior, since the actual
+  startup log lines themselves were not directly observable without Render
+  log access.
+- **Supabase Logs Explorer / Reports / Metrics API**: not interactively
+  inspected in this task either (no dashboard session, no Management API
+  personal access token available for those specific endpoints). What
+  *was* obtained instead — genuine, read-only, live evidence via the
+  Supabase CLI's own Management-API-backed `inspect db` commands (`db-stats`:
+  14MB database, 100% index/table cache hit rates, 80MB WAL; `table-stats`:
+  per-table row/scan counts, including the pg-boss evidence above). This is
+  real database-level observability, but it is **not** the same product as
+  Logs Explorer/Reports/the Prometheus-compatible Metrics API, and should
+  not be conflated with having "verified Supabase Logs/Reports/Metrics" —
+  those remain unverified in this task.
+- **PRODUCTION BLOCKER — remaining, genuine**: F-05's and F-05A's
+  migrations (`0005`/`0006`) are still **not applied to the real staging
+  database** — `deploy-migrations.yml` has the identical missing-secrets
+  problem as `ci.yml` had (`SUPABASE_ACCESS_TOKEN`/`SUPABASE_PROJECT_ID`/
+  `SUPABASE_DB_PASSWORD` all confirmed empty), so the corrected
+  hostel/reception RLS scoping exists only in code and in the local dev
+  database, not yet on the live staging Postgres instance. This is an
+  F-05/F-05A deployment gap surfaced during F-07B's process, not fixed here
+  (out of this task's scope — applying migrations to the live staging
+  database is a distinct, consequential action from what this task's
+  authorization covered). Render/Supabase plan upgrades remain untouched,
+  per this task's explicit instruction.
+
+## 10. What this task (F-07 + F-07B) did not do
 
 - Did not install Sentry or any other APM/error-tracking tool.
-- Did not add a metrics/Prometheus stack.
-- Did not create any alert, threshold, or on-call rule.
+- Did not add a metrics/Prometheus stack, Grafana, Datadog, or Better
+  Stack.
+- Did not create any alert, threshold, or on-call rule/destination.
 - Did not add keep-alive/synthetic traffic to Render staging.
 - Did not modify `render.yaml`, `supabase/config.toml`, or any billing/plan
-  setting.
-- Did not touch `security_incidents`/`audit_logs` schemas, RLS, or content.
-- Did not commit or push.
+  setting — Render and Supabase both remain on their current Free tier.
+- Did not touch `security_incidents`/`audit_logs` schemas, RLS, or content
+  beyond what F-05/F-05A already changed and reported separately.
+- Did not apply the F-05/F-05A migrations to the real staging database
+  (§9 — a genuine, separate, remaining gap).
+- Did not hand-craft a raw SQL job insertion against pg-boss's internal
+  schema on the live staging database (§9 — considered and rejected as an
+  unsafe, ad-hoc mechanism).
+- F-07's own remediation task did not commit or push (by explicit
+  instruction); F-07B's task explicitly authorized, and performed, exactly
+  one deployment push plus one necessary CI-config fix discovered in the
+  process — both recorded in `docs/current-state.md`.
