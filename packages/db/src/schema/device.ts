@@ -41,16 +41,43 @@ export const trustedDevices = pgTable(
       to: authenticatedRole,
       using: sql`${t.parentId} = ${callerParentId}`,
     }),
-    pgPolicy("trusted_devices_insert_own", {
-      for: "insert",
-      to: authenticatedRole,
-      withCheck: sql`${t.parentId} = ${callerParentId}`,
-    }),
+    // No INSERT policy is granted to `authenticated` here — deliberately,
+    // per the PRR F-01 remediation. `docs/rls-policy-matrix.md` always
+    // documented device creation as "post-attestation, via Fastify-mediated
+    // flow, not a raw client insert," but the previous
+    // `trusted_devices_insert_own` policy (WITH CHECK parent_id = caller
+    // only) did not actually enforce that — it let any authenticated parent
+    // self-insert a fully active device row with no attestation whatsoever,
+    // directly defeating `requireActiveTrustedDevice()`'s purpose. Device
+    // registration is not implemented yet (`registerCurrentDevice()` still
+    // throws `DeviceServiceNotImplementedError` — see
+    // src/services/devices/devices.ts), so there is no legitimate
+    // authenticated-client INSERT path to preserve today. Once a real,
+    // attestation-gated registration flow exists, it must write through the
+    // backend's own privileged connection (which bypasses RLS by design,
+    // exactly like `device_attestation_events`' insert path below), never
+    // through a client-facing RLS policy — RLS cannot itself verify a Play
+    // Integrity/App Attest result, so no `authenticated`-role INSERT policy
+    // on this table can ever be correct.
+    //
+    // Self-revocation (below) is the only authenticated-client mutation
+    // this table now permits, and it is restricted to the one-way
+    // active -> revoked transition, on `revoked_at`/`revoked_reason` only.
     pgPolicy("trusted_devices_revoke_own", {
       for: "update",
       to: authenticatedRole,
-      using: sql`${t.parentId} = ${callerParentId}`,
-      withCheck: sql`${t.parentId} = ${callerParentId}`,
+      // Can only act on a currently-active row of your own — an
+      // already-revoked device is a dead end for this policy, so there is
+      // nothing left for a client to legitimately do to it.
+      using: sql`${t.parentId} = ${callerParentId} and ${t.revokedAt} is null`,
+      // The resulting row must belong to the same parent (ownership can
+      // never change) and must be revoked (never un-revoked back to
+      // active) — a one-way transition, never the reverse. Column-level
+      // protection (device_fingerprint/platform/expo_push_token/parent_id
+      // cannot be smuggled into this same UPDATE) is enforced by the
+      // `trusted_devices_revoke_only` trigger (see the companion migration
+      // SQL for F-01 — Drizzle's schema DSL has no trigger primitive).
+      withCheck: sql`${t.parentId} = ${callerParentId} and ${t.revokedAt} is not null`,
     }),
     pgPolicy("trusted_devices_all_super_admin", {
       for: "all",

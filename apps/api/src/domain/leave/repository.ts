@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   desc,
   eq,
   inArray,
@@ -18,6 +19,7 @@ import {
   type CreateLeaveRequestInput,
   type DecidableStatus,
   type DecideLeaveRequestInput,
+  type LeaveApprovalEventView,
   type LeaveRequestStatus,
   type LeaveRequestView,
   type MarkExpiredInput,
@@ -117,6 +119,13 @@ export interface LeaveRepository {
    * shape as `decide()`, including hostel-scope enforcement for
    * hostel-scoped staff roles (see MarkExpiredInput's doc comment). */
   markExpired(input: MarkExpiredInput): Promise<DecideOutcome>;
+
+  /** All immutable `leave_approval_events` rows for one leave request,
+   * oldest first (Approval History, Phase 4 Prompt 10). No authorization
+   * check here — the caller (LeaveService) must already have established
+   * access via getForParent/getForStudent before calling this, exactly as
+   * `decide()`'s own event-insert trusts its one caller's precondition. */
+  listEventsForLeaveRequest(leaveRequestId: string): Promise<LeaveApprovalEventView[]>;
 }
 
 function toView(row: typeof leaveRequests.$inferSelect): LeaveRequestView {
@@ -129,6 +138,19 @@ function toView(row: typeof leaveRequests.$inferSelect): LeaveRequestView {
     status: row.status,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+// Deliberately does not read actorParentId/actorStaffId off `row` — see
+// LeaveApprovalEventView's own doc comment on why actor identity is never
+// surfaced to a client.
+function toEventView(row: typeof leaveApprovalEvents.$inferSelect): LeaveApprovalEventView {
+  return {
+    id: row.id,
+    eventType: row.eventType,
+    response: row.response,
+    biometricConfirmed: row.biometricConfirmed,
+    occurredAt: row.occurredAt.toISOString(),
   };
 }
 
@@ -418,5 +440,14 @@ export class DrizzleLeaveRepository implements LeaveRepository {
 
       return { kind: "success", leaveRequest: toView(row) };
     });
+  }
+
+  async listEventsForLeaveRequest(leaveRequestId: string): Promise<LeaveApprovalEventView[]> {
+    const rows = await db
+      .select()
+      .from(leaveApprovalEvents)
+      .where(eq(leaveApprovalEvents.leaveRequestId, leaveRequestId))
+      .orderBy(asc(leaveApprovalEvents.occurredAt));
+    return rows.map(toEventView);
   }
 }

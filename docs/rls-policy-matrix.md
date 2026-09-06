@@ -90,12 +90,14 @@ Legend: ✅ allowed (with condition noted), ❌ denied, — not applicable to th
 
 ## `trusted_devices`
 
+**Remediated (PRR Phase 13, Finding F-01):** the RLS layer previously granted `authenticated` a self-service INSERT policy (`trusted_devices_insert_own`, `WITH CHECK parent_id = caller` only) that this row's own text described as "post-attestation, via Fastify-mediated flow" without the policy actually enforcing that — any authenticated parent could self-insert a fully active device row with no attestation whatsoever. That policy has been removed entirely (`supabase/migrations/0003_f01_trusted_devices_rls_remediation.sql`). RLS cannot itself verify a Play Integrity/App Attest result, so **no `authenticated`-role INSERT policy on this table can ever be correct** — device registration, once implemented, must write through the backend's own privileged (RLS-bypassing) connection, exactly like `device_attestation_events`'s insert path below, never through a client-facing policy.
+
 | Actor | SELECT | INSERT | UPDATE | DELETE | Authorization basis |
 |---|---|---|---|---|---|
 | anonymous | ❌ | ❌ | ❌ | ❌ | |
-| parent (self) | ✅ own devices | ✅ own (post-attestation, via Fastify-mediated flow, not a raw client insert) | ✅ own — `revoked_at` only | ❌ | `parent_id = <caller's parents.id>` |
+| parent (self) | ✅ own devices | ❌ — no client INSERT path exists; a real registration flow must be backend-mediated (Fastify service-role, post-attestation), never a client-facing RLS policy | ✅ own — `revoked_at`/`revoked_reason` only, one-way active → revoked (never the reverse), no other column may change in the same statement | ❌ | `parent_id = <caller's parents.id>`; the one-way transition and column restriction are enforced by `trusted_devices_revoke_own`'s `USING`/`WITH CHECK` plus the `trusted_devices_revoke_only` trigger |
 | anyone else (incl. guardian for a *different* parent's devices) | ❌ | ❌ | ❌ | ❌ | device trust is strictly per-parent, never shared |
-| super_admin | ✅ all (incident response) | ❌ | ✅ `revoked_at` only | ❌ | role claim |
+| super_admin | ✅ all (incident response) | ⚠️ policy grants `FOR ALL` (see note) | ✅ (see note) | ❌ | role claim — **note:** the current `trusted_devices_all_super_admin` policy is broader than this row's own INSERT/UPDATE-scope claims (it does not itself restrict INSERT or column-level UPDATE the way the table above implies); this pre-existing discrepancy was observed during the F-01 remediation but is a separate, unrelated finding, not part of F-01, and was deliberately left unchanged — see the F-01 remediation report |
 
 ## `device_attestation_events` (immutable)
 

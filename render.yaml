@@ -1,0 +1,51 @@
+# F-06 implementation (ADR-021) — Render Blueprint for apps/api.
+#
+# This is repository-side configuration only: no Render account/service has
+# been created from this file, and this task does not create one (F-06
+# Phase 7/Phase 3 — do not provision external hosting). Applying this
+# blueprint (via Render's dashboard "New Blueprint" flow, pointed at this
+# repository) is the follow-up provisioning step, explicitly deferred.
+#
+# Render was selected (not Fly.io/Railway/a self-managed VM) as the
+# concrete persistent-process host for the reasons recorded in
+# docs/runbooks/production-deployment.md §3: lowest operational complexity
+# for a single persistent Node service at this project's MVP/pilot scale,
+# native GitHub-repository builds from a Dockerfile, a built-in health-check
+# path, and straightforward environment-variable/secret management — with no
+# vendor lock-in risk beyond this one file, since the actual deployable
+# artifact is the portable apps/api/Dockerfile.
+services:
+  - type: web
+    name: digihostel-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: starter
+    # A single instance — horizontal scaling is intentionally deferred (F-06
+    # Phase 12 Test D) until there is evidence it's needed; pg-boss's own
+    # singleton-key/conditional-claim design already tolerates multiple
+    # instances safely whenever that changes, with no code change required.
+    numInstances: 1
+    healthCheckPath: /api/v1/healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render exposes its own git commit SHA as RENDER_GIT_COMMIT
+      # automatically; mapped here so BUILD_SHA (read by apps/api/src/index.ts
+      # and returned by /healthz) reflects the real deployed commit without
+      # this file needing to know it in advance.
+      - key: BUILD_SHA
+        fromService:
+          type: web
+          name: digihostel-api
+          envVarKey: RENDER_GIT_COMMIT
+      # Secrets — deliberately `sync: false` (never a value in this file);
+      # set once in the Render dashboard after the service is created. See
+      # docs/runbooks/production-deployment.md §11 for the full list and
+      # what each one is for.
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false

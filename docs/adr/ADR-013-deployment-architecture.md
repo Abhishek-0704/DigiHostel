@@ -2,9 +2,12 @@
 
 - **ADR ID:** ADR-013
 - **Title:** Deployment Architecture
-- **Status:** ACCEPTED
+- **Status:** ACCEPTED (backend-hosting clause only superseded — see notice below)
 - **Date:** 2026-09-02
-- **Related ADRs:** ADR-004 (Mobile Technology — EAS follows from Expo), ADR-006 (Data Platform — Supabase).
+- **Superseded by:** ADR-021 (backend-hosting clause only — "Vercel (backend/web hosting)" as it applies to `apps/api`; the GitHub/CI-CD, Supabase, and EAS clauses below are unaffected and remain in force)
+- **Related ADRs:** ADR-004 (Mobile Technology — EAS follows from Expo), ADR-006 (Data Platform — Supabase), ADR-011 (Background Job Architecture — the pg-boss requirement ADR-021 reconciles this ADR's Vercel choice against), ADR-021 (API + pg-boss Worker Runtime Hosting — supersedes this ADR's backend-hosting clause).
+
+> **Supersession notice (2026-09-06, F-06A):** the "Vercel (backend/web hosting)" decision below was never evaluated against ADR-011's pg-boss requirement at the runtime/process level. ADR-021 found that `apps/api`'s Fastify HTTP server and pg-boss background workers share one persistent Node process, which Vercel's serverless execution model cannot host. ADR-021 supersedes only this specific clause; every other decision in this ADR (GitHub + GitHub Actions for CI/CD, Supabase for database/realtime/storage, EAS for mobile builds) stands unchanged.
 
 ## Decision
 

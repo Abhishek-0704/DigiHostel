@@ -2,19 +2,24 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { AppProviders } from "@/src/providers/AppProviders";
 import { AuthGate } from "@/src/navigation/AuthGate";
+import { NotificationDeepLinkHandler } from "@/src/features/notifications/components/NotificationDeepLinkHandler";
 
 /**
- * Root layout (Prompt 2 foundation; route protection wired in Prompt 3).
- * Composes AppProviders once for the whole route tree, then AuthGate
- * (src/navigation/AuthGate.tsx) redirects between the (auth)/(onboarding)/
- * (app) groups based on AuthContext's canonical status — see
- * apps/parent-mobile/docs/authentication.md for the full state machine.
+ * Root layout (Prompt 2 foundation; route protection wired in Prompt 3;
+ * notification tap-routing wired in Prompt 8). Composes AppProviders once
+ * for the whole route tree, then AuthGate (src/navigation/AuthGate.tsx)
+ * redirects between the (auth)/(onboarding)/(app) groups based on
+ * AuthContext's canonical status — see apps/parent-mobile/docs/authentication.md
+ * for the full state machine. NotificationDeepLinkHandler (renders nothing)
+ * mounts notification-tap routing once here — see
+ * apps/parent-mobile/docs/notifications.md §9.
  */
 export default function RootLayout() {
   return (
     <AppProviders>
       <StatusBar style="auto" />
       <AuthGate>
+        <NotificationDeepLinkHandler />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="(auth)" />

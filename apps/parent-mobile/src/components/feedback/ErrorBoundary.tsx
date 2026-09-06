@@ -49,6 +49,17 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
+  container: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+    // Pinned explicitly, matching `message`'s own hardcoded (deliberately
+    // theme-independent — see the class doc comment) dark text color. Left
+    // unset, whatever happens to render behind this fallback (which could
+    // itself be dark, e.g. on a device in dark mode) risks near-invisible
+    // text on the one screen that most needs to stay legible.
+    backgroundColor: "#FFFFFF",
+  },
   message: { fontSize: 15, textAlign: "center", color: "#171A21" },
 });

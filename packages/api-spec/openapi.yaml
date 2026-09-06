@@ -13,14 +13,107 @@ paths:
     get:
       operationId: healthCheck
       tags: [health]
-      summary: Infrastructure health check
+      summary: Liveness check — is this process alive
+      description: >
+        Never touches the database — stays correct even if Postgres is
+        briefly unreachable. This is the endpoint a deployment host's own
+        container-restart health check should target (F-06).
       responses:
         "200":
-          description: Service is healthy
+          description: Service is alive
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /readyz:
+    get:
+      operationId: readinessCheck
+      tags: [health]
+      summary: Readiness check — can this instance serve production traffic
+      description: >
+        Verifies the one dependency every route and every pg-boss worker
+        shares (Postgres), via a trivial query — never a business query
+        (F-06). Never returns the underlying error's message/stack.
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyStatus"
+        "503":
+          description: Not ready — a required dependency is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotReadyStatus"
+
+  /auth/otp/request:
+    post:
+      operationId: requestOtp
+      tags: [auth]
+      summary: >
+        Request an OTP for parent/guardian login (F-02 remediation, ADR-020's
+        required eligibility pre-check)
+      description: >
+        Resolves rollNumber + relationshipType to an authoritative parent
+        phone number server-side and, if eligible, dispatches an OTP to it.
+        The response is always the same shape regardless of eligibility
+        (anti-enumeration) — the client never learns whether a given roll
+        number/relationship is registered. No phone number is ever accepted
+        from or returned to the client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RequestOtpBody"
+      responses:
+        "200":
+          description: >
+            A challenge id was issued — this does NOT necessarily mean an OTP
+            was actually sent (see description)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpChallenge"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+
+  /auth/otp/verify:
+    post:
+      operationId: verifyOtp
+      tags: [auth]
+      summary: Verify an OTP challenge and obtain a Supabase session
+      description: >
+        Verifies the code against the phone number bound to challengeId
+        server-side. On success, returns real Supabase session tokens for the
+        client to adopt via supabase.auth.setSession() — the client never
+        calls Supabase's own OTP endpoints directly. Never distinguishes an
+        unknown/expired/exhausted/ineligible challenge from a genuinely wrong
+        code — all fail identically (anti-enumeration).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyOtpBody"
+      responses:
+        "200":
+          description: Verified — a real Supabase session for the client to adopt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpVerificationResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Invalid or expired code, or an unknown/exhausted/ineligible challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
 
   /leave-requests:
     post:
@@ -99,6 +192,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LeaveRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /leave-requests/{leaveRequestId}/events:
+    get:
+      operationId: listLeaveRequestEvents
+      tags: [leave]
+      summary: >
+        Get a leave request's immutable approval-event timeline (Approval
+        History) — authenticated owning student, or authenticated
+        parent/guardian (relationship-checked). Same authorization/anti-
+        enumeration shape as GET /leave-requests/{leaveRequestId}.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LeaveRequestId"
+      responses:
+        "200":
+          description: >
+            The leave request's approval events, oldest first. Never includes
+            which specific parent/guardian/staff member acted.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LeaveApprovalEvent"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -219,11 +342,32 @@ components:
   schemas:
     HealthStatus:
       type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+          description: >
+            Whatever build identifier the deployment host injects (e.g. a
+            git SHA); "unknown" when nothing is set (e.g. local dev).
+
+    ReadyStatus:
+      type: object
       required: [status]
       properties:
         status:
           type: string
           enum: [ok]
+
+    NotReadyStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [not_ready]
 
     LeaveRequestStatus:
       type: string
@@ -271,6 +415,30 @@ components:
           type: string
           format: date-time
 
+    LeaveApprovalEvent:
+      type: object
+      description: >
+        One immutable leave_approval_events row (ADR-015). Deliberately
+        excludes any actor identity field — never reveals which specific
+        parent/guardian/staff member acted.
+      required: [id, eventType, response, biometricConfirmed, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          enum: [notified, responded, escalated, expired, manual_override]
+        response:
+          type: string
+          enum: [approved, rejected, no_response]
+          nullable: true
+        biometricConfirmed:
+          type: boolean
+        occurredAt:
+          type: string
+          format: date-time
+
     CreateLeaveRequestBody:
       type: object
       description: >
@@ -312,6 +480,65 @@ components:
       properties:
         biometricAssertion:
           $ref: "#/components/schemas/BiometricAssertion"
+
+    ParentRelationshipType:
+      type: string
+      description: Mirrors packages/db/src/schema/enums.ts's parent_relationship_type enum.
+      enum: [father, mother, guardian]
+
+    RequestOtpBody:
+      type: object
+      description: >
+        Deliberately has no phone field of any kind — the authoritative phone
+        number is resolved entirely server-side and is never accepted from
+        the client (F-02 core requirement).
+      required: [rollNumber, relationshipType]
+      additionalProperties: false
+      properties:
+        rollNumber:
+          type: string
+          minLength: 1
+        relationshipType:
+          $ref: "#/components/schemas/ParentRelationshipType"
+
+    VerifyOtpBody:
+      type: object
+      description: >
+        Deliberately has no phone field — the phone bound to challengeId is
+        resolved server-side.
+      required: [challengeId, code]
+      additionalProperties: false
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          minLength: 1
+
+    OtpChallenge:
+      type: object
+      description: >
+        Constant shape regardless of eligibility — never reveals whether the
+        supplied roll number/relationship is actually registered.
+      required: [challengeId]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+
+    OtpVerificationResult:
+      type: object
+      description: >
+        Real Supabase session tokens — the client adopts these locally via
+        supabase.auth.setSession(), never receiving a phone number at any
+        point in this flow.
+      required: [accessToken, refreshToken]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
 
     ErrorBody:
       type: object

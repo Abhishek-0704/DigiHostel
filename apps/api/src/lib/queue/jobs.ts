@@ -5,6 +5,9 @@ import { boss } from "./boss.js";
 
 export const ESCALATION_QUEUE = "leave-escalation-stage-evaluate";
 export const NOTIFICATION_QUEUE = "leave-notification-deliver";
+/** F-03 remediation (PRR Phase 13) — periodic maintenance job, not tied to
+ * any specific leave request; see workers/notificationReaperWorker.ts. */
+export const NOTIFICATION_REAP_QUEUE = "leave-notification-reap";
 
 export interface EscalationJobPayload {
   leaveRequestId: string;
@@ -14,12 +17,21 @@ export interface EscalationJobPayload {
 export interface NotificationJobPayload {
   leaveRequestId: string;
   stage: DecidableStatus;
-  /** Present only for a self-scheduled retry (ADR-018 §3) — targets one
-   * already-created logical notification at a specific attempt. Absent for
-   * the initial stage-triggered job, which resolves recipients fresh and
-   * creates/attempts each recipient's own logical notification row. */
+  /** Present for a self-scheduled retry (ADR-018 §3) or a reaper-triggered
+   * reclaim (F-03) — either way, targets one already-created logical
+   * notification; `claimAttempt()` re-derives whether it's actually still
+   * eligible from the row's own current state, never from anything in this
+   * payload. Absent for the initial stage-triggered job, which resolves
+   * recipients fresh and creates/attempts each recipient's own logical
+   * notification row.
+   *
+   * F-03 note: this payload deliberately no longer carries an
+   * `expectedRetryCount` field — that was the root cause of the original
+   * finding (a value captured at schedule time going stale the moment a
+   * crash/redelivery/reap changed the row's real retry_count first). See
+   * `NotificationRepository.claimAttempt`'s own doc comment.
+   */
   notificationId?: string;
-  expectedRetryCount?: number;
 }
 
 /** The Drizzle transaction shape `db.transaction()` hands its callback —

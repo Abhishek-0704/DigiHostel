@@ -12,9 +12,14 @@ export function useReducedMotion(): boolean {
 
   useEffect(() => {
     let mounted = true;
-    AccessibilityInfo.isReduceMotionEnabled().then((value) => {
-      if (mounted) setReduced(value);
-    });
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((value) => {
+        if (mounted) setReduced(value);
+      })
+      .catch(() => {
+        // Platform couldn't report the current setting — keeps the safe
+        // `false` default rather than crashing on an unhandled rejection.
+      });
     const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduced);
     return () => {
       mounted = false;

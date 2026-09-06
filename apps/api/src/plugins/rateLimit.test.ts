@@ -4,6 +4,7 @@ import { FakeAuthDbPort } from "../lib/auth/__fixtures__/fake-db-port.js";
 import { generateTestKeyPair, signTestJwt } from "../lib/auth/__fixtures__/test-jwt.js";
 import { createJwtVerifier } from "../lib/auth/jwt.js";
 import { FakeLeaveRepository } from "../domain/leave/__fixtures__/fake-repository.js";
+import { FakeOtpSender } from "../domain/auth/__fixtures__/fake-otp-sender.js";
 import type { LeaveRequestStatus, LeaveRequestView } from "../domain/leave/types.js";
 import type { BiometricFreshnessGate } from "../lib/auth/security-gates.js";
 
@@ -48,6 +49,7 @@ async function buildTestApp(overrides: Parameters<typeof buildApp>[0] = {}) {
   const app = await buildApp({
     authOverrides: { jwtVerifier, authDbPort: authDb },
     leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+    otpAuthOverrides: { otpSender: new FakeOtpSender() },
     ...overrides,
   });
   const parentToken = await signTestJwt({ sub: "parent-auth", privateKey: pair.privateKey });
@@ -145,7 +147,12 @@ describe("rate limiting (G-02)", () => {
         },
       },
     });
-    const body = { biometricAssertion: { assertionToken: "tok", actionId: "leave-decision" } };
+    const body = {
+      biometricAssertion: {
+        assertionToken: "tok",
+        actionId: "leave-decision:11111111-1111-1111-1111-111111111111",
+      },
+    };
 
     const first = await app.inject({
       method: "POST",
@@ -194,7 +201,12 @@ describe("rate limiting (G-02)", () => {
       method: "POST",
       url: "/api/v1/leave-requests/11111111-1111-1111-1111-111111111111/approve",
       headers: { authorization: `Bearer ${parentToken}` },
-      payload: { biometricAssertion: { assertionToken: "tok", actionId: "leave-decision" } },
+      payload: {
+        biometricAssertion: {
+          assertionToken: "tok",
+          actionId: "leave-decision:11111111-1111-1111-1111-111111111111",
+        },
+      },
     });
     expect(approve.statusCode).toBe(200);
     await app.close();

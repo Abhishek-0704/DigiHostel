@@ -31,3 +31,28 @@ export const NOTIFICATION_RETRY_DELAYS_MS = [
 export const NOTIFICATION_MAX_RETRIES = NOTIFICATION_RETRY_DELAYS_MS.length;
 
 export const NOTIFICATION_MAX_BACKOFF_MS = envNumber("NOTIFICATION_MAX_BACKOFF_MS", 120_000);
+
+/**
+ * F-03 remediation (PRR Phase 13 — notification crash/retry recovery).
+ *
+ * `NOTIFICATION_CLAIM_LEASE_MS`: how long a claimed delivery attempt
+ * (`notifications.claimed_at`) is considered "genuinely in flight" before
+ * it's eligible to be reclaimed. Must comfortably exceed a normal Expo Push
+ * API call's duration (a few seconds, no explicit client-side timeout is
+ * configured — see lib/push/expoPush.ts) to avoid reclaiming a merely-slow,
+ * still-healthy attempt; a reclaim of a still-genuinely-in-flight attempt is
+ * not a correctness bug either way (ADR-018 §5 already tolerates a
+ * duplicate provider send), only a minor efficiency cost, so this errs
+ * toward the existing retry policy's own shortest interval (30s) rather
+ * than pg-boss's much longer 900s default job-expiration window, which is
+ * what previously made recovery from a worker crash impractically slow.
+ *
+ * The reaper itself re-checks for stale claims once a minute, via pg-boss's
+ * own native cron `schedule()` (see workers/notificationReaperWorker.ts) —
+ * not a separately-configurable interval, since pg-boss's cron scheduling
+ * doesn't take a plain millisecond duration. `NOTIFICATION_REAP_BATCH_SIZE`
+ * bounds each reap pass to a fixed number of rows (via the indexed
+ * notifications_stale_claim_idx), never a full-table scan.
+ */
+export const NOTIFICATION_CLAIM_LEASE_MS = envNumber("NOTIFICATION_CLAIM_LEASE_MS", 45_000);
+export const NOTIFICATION_REAP_BATCH_SIZE = envNumber("NOTIFICATION_REAP_BATCH_SIZE", 50);

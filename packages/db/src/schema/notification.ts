@@ -35,6 +35,17 @@ export const notifications = pgTable(
     stage: leaveRequestStatus("stage"),
     status: notificationStatus("status").notNull().default("queued"),
     retryCount: smallint("retry_count").notNull().default(0),
+    // F-03 remediation (PRR Phase 13): set by claimAttempt() each time a
+    // delivery attempt is claimed; read back by claimAttempt() itself (to
+    // decide whether an existing claim's lease has expired) and by the
+    // reaper's findStaleClaims() query. Nullable: null means "never claimed
+    // yet" (a fresh row, or one whose claim already resolved to a terminal
+    // status, for which this field's exact value no longer matters). This
+    // column — not the `retryCount` value a job payload happens to carry —
+    // is now the sole authority for "is this attempt currently, genuinely
+    // in flight," which is what makes a stale/redelivered job payload safe
+    // to reprocess instead of a permanently orphaning source of truth.
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -42,6 +53,14 @@ export const notifications = pgTable(
   (t) => [
     index("notifications_recipient_idx").on(t.recipientType, t.recipientId),
     index("notifications_status_idx").on(t.status),
+    // F-03: supports the reaper's bounded "find stale claims" query
+    // (status = 'queued' AND claimed_at < cutoff) without a full-table scan
+    // — partial, matching this schema's existing
+    // trusted_devices_active_idx convention for a similarly-shaped
+    // "only rows in one particular status matter" index.
+    index("notifications_stale_claim_idx")
+      .on(t.claimedAt)
+      .where(sql`${t.status} = 'queued'`),
     // ADR-017 §5 / ADR-018 §1: one logical notification per escalation stage
     // per recipient. Postgres treats each NULL `stage` as distinct from every
     // other NULL, so non-leave (future library-pass) notifications, which

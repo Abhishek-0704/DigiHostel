@@ -10,7 +10,12 @@ import {
 } from "react";
 import { authService } from "../services/supabase/auth";
 import { deviceService } from "../services/devices/devices";
-import { AppError, toAppError } from "../types/errors";
+import {
+  otpEligibilityService,
+  type ParentRelationshipType,
+} from "../services/auth/otpEligibility";
+import { mapOtpError } from "../features/authentication/otpErrors";
+import { AppError } from "../types/errors";
 import { logger } from "../services/logger/logger";
 import { useSessionContext } from "./SessionContext";
 import { deriveAuthStatus, type AuthStatus, type DeviceCheckStatus } from "./authStatus";
@@ -23,7 +28,7 @@ import { deriveAuthStatus, type AuthStatus, type DeviceCheckStatus } from "./aut
  * (Prompt 2, unchanged): SessionContext remains the single source of raw
  * Supabase session truth; AuthContext derives a richer, routing-relevant
  * status from it plus the device-trust check, and exposes the OTP
- * send/verify/sign-out actions. See src/contexts/authStatus.ts for the
+ * request/verify/sign-out actions. See src/contexts/authStatus.ts for the
  * pure decision logic this wraps.
  *
  * Authentication (a valid Supabase session exists) is explicitly NOT the
@@ -35,8 +40,17 @@ import { deriveAuthStatus, type AuthStatus, type DeviceCheckStatus } from "./aut
 interface AuthContextValue {
   status: AuthStatus;
   error: AppError | null;
-  sendOtp: (phoneNumber: string) => Promise<void>;
-  verifyOtp: (phoneNumber: string, token: string) => Promise<void>;
+  /** Resolves eligibility server-side and, if eligible, dispatches an OTP —
+   * always resolves with a challenge id regardless of eligibility
+   * (anti-enumeration, F-02 remediation). Never accepts or returns a phone
+   * number. */
+  requestOtp: (
+    rollNumber: string,
+    relationshipType: ParentRelationshipType,
+  ) => Promise<{ challengeId: string }>;
+  /** Verifies the code against the given challenge and, on success, adopts
+   * the resulting backend-issued Supabase session locally. */
+  verifyOtp: (challengeId: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
   /** Re-runs the device-trust check — e.g. after a future device
    * registration flow (Prompt 5/6) completes, or a manual pull-to-refresh
@@ -102,29 +116,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [session, checkDeviceStatus]);
 
-  const sendOtp = useCallback(async (phoneNumber: string) => {
-    setIsAuthenticating(true);
-    setError(null);
-    try {
-      await authService.sendOtp(phoneNumber);
-    } catch (err) {
-      const mapped = toAppError(err);
-      setError(mapped);
-      throw mapped;
-    } finally {
-      setIsAuthenticating(false);
-    }
-  }, []);
+  const requestOtp = useCallback(
+    async (rollNumber: string, relationshipType: ParentRelationshipType) => {
+      setIsAuthenticating(true);
+      setError(null);
+      try {
+        return await otpEligibilityService.requestOtp(rollNumber, relationshipType);
+      } catch (err) {
+        const mapped = mapOtpError(err);
+        setError(mapped);
+        throw mapped;
+      } finally {
+        setIsAuthenticating(false);
+      }
+    },
+    [],
+  );
 
-  const verifyOtp = useCallback(async (phoneNumber: string, token: string) => {
+  const verifyOtp = useCallback(async (challengeId: string, code: string) => {
     setIsAuthenticating(true);
     setError(null);
     try {
-      await authService.verifyOtp(phoneNumber, token);
+      const { accessToken, refreshToken } = await otpEligibilityService.verifyOtp(
+        challengeId,
+        code,
+      );
+      await authService.adoptSession(accessToken, refreshToken);
       // Session/device-check effects above react to the resulting session
       // change automatically — no extra state update needed here.
     } catch (err) {
-      const mapped = toAppError(err);
+      const mapped = mapOtpError(err);
       setError(mapped);
       throw mapped;
     } finally {
@@ -148,8 +169,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, error, sendOtp, verifyOtp, signOut, refreshDeviceStatus: checkDeviceStatus }),
-    [status, error, sendOtp, verifyOtp, signOut, checkDeviceStatus],
+    () => ({
+      status,
+      error,
+      requestOtp,
+      verifyOtp,
+      signOut,
+      refreshDeviceStatus: checkDeviceStatus,
+    }),
+    [status, error, requestOtp, verifyOtp, signOut, checkDeviceStatus],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

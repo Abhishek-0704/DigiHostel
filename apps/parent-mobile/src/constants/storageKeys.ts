@@ -17,4 +17,8 @@ export const STORAGE_KEYS = {
    * identifier (no IMEI/serial/MAC), never sent anywhere until a real
    * device-registration endpoint exists. */
   deviceInstallationId: "digihostel.parent.device-installation-id",
+  /** Local, non-sensitive preference only (Prompt 5) — "has this user opted
+   * in to biometric step-up on this installation." Never a biometric
+   * template, never a credential. See src/services/biometric/biometricPreference.ts. */
+  biometricEnabled: "digihostel.parent.biometric-enabled",
 } as const;

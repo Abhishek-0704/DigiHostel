@@ -13,7 +13,7 @@ import {
   LeaveRequestNotFoundError,
   LeaveValidationError,
 } from "../domain/leave/errors.js";
-import type { LeaveRequestView } from "../domain/leave/types.js";
+import type { LeaveApprovalEventView, LeaveRequestView } from "../domain/leave/types.js";
 
 const paramsSchema = z.object({ leaveRequestId: z.string().uuid() }).strict();
 
@@ -75,6 +75,18 @@ function serialize(view: LeaveRequestView) {
     status: view.status,
     createdAt: view.createdAt,
     updatedAt: view.updatedAt,
+  };
+}
+
+// Deliberately narrower than the domain type — never serializes actor
+// identity (see LeaveApprovalEventView's doc comment).
+function serializeEvent(view: LeaveApprovalEventView) {
+  return {
+    id: view.id,
+    eventType: view.eventType,
+    response: view.response,
+    biometricConfirmed: view.biometricConfirmed,
+    occurredAt: view.occurredAt,
   };
 }
 
@@ -209,6 +221,54 @@ export async function leaveRoutes(app: FastifyInstance) {
           return;
         }
         await reply.code(200).send(serialize(view));
+      } catch (err) {
+        await sendLeaveError(reply, err);
+      }
+    },
+  );
+
+  // Approval History (Phase 4 Prompt 10) — read-only, same authorization
+  // shape as the GET-by-id route above (owning student OR relationship-
+  // checked parent/guardian; identical anti-enumeration 404). Adds no new
+  // table/RLS policy — leave_approval_events and its RLS already exist
+  // exactly as ADR-015 designed them; this is the missing route ADR-015
+  // anticipated ("a parent's approval history view is simply a
+  // filtered/joined query over it") but never built.
+  app.get(
+    "/leave-requests/:leaveRequestId/events",
+    { preHandler: [app.authenticate] },
+    async (request, reply) => {
+      const params = paramsSchema.safeParse(request.params);
+      if (!params.success) {
+        await reply
+          .code(400)
+          .send({ error: { code: "validation_failed", message: "Invalid leave request id." } });
+        return;
+      }
+
+      const profile = request.auth!.profile;
+      try {
+        let events: LeaveApprovalEventView[];
+        if (profile.kind === "student") {
+          events = await app.leaveService.getEventsForStudent(
+            params.data.leaveRequestId,
+            profile.id,
+          );
+        } else if (profile.kind === "parent") {
+          events = await app.leaveService.getEventsForParent(
+            params.data.leaveRequestId,
+            profile.id,
+          );
+        } else {
+          await reply.code(403).send({
+            error: {
+              code: "role_required",
+              message: "Student or parent/guardian role required.",
+            },
+          });
+          return;
+        }
+        await reply.code(200).send(events.map(serializeEvent));
       } catch (err) {
         await sendLeaveError(reply, err);
       }

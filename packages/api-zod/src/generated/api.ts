@@ -9,11 +9,62 @@
 import * as zod from 'zod';
 
 /**
- * @summary Infrastructure health check
+ * Never touches the database — stays correct even if Postgres is briefly unreachable. This is the endpoint a deployment host's own container-restart health check should target (F-06).
+
+ * @summary Liveness check — is this process alive
  */
 export const healthCheckResponse = zod.object({
+  "status": zod.enum(['ok']),
+  "version": zod.string().describe('Whatever build identifier the deployment host injects (e.g. a git SHA); \"unknown\" when nothing is set (e.g. local dev).\n')
+})
+
+
+/**
+ * Verifies the one dependency every route and every pg-boss worker shares (Postgres), via a trivial query — never a business query (F-06). Never returns the underlying error's message/stack.
+
+ * @summary Readiness check — can this instance serve production traffic
+ */
+export const readinessCheckResponse = zod.object({
   "status": zod.enum(['ok'])
 })
+
+
+/**
+ * Resolves rollNumber + relationshipType to an authoritative parent phone number server-side and, if eligible, dispatches an OTP to it. The response is always the same shape regardless of eligibility (anti-enumeration) — the client never learns whether a given roll number/relationship is registered. No phone number is ever accepted from or returned to the client.
+
+ * @summary Request an OTP for parent/guardian login (F-02 remediation, ADR-020's required eligibility pre-check)
+
+ */
+
+
+
+export const requestOtpBody = zod.object({
+  "rollNumber": zod.string().min(1),
+  "relationshipType": zod.enum(['father', 'mother', 'guardian']).describe('Mirrors packages\/db\/src\/schema\/enums.ts\'s parent_relationship_type enum.')
+}).describe('Deliberately has no phone field of any kind — the authoritative phone number is resolved entirely server-side and is never accepted from the client (F-02 core requirement).\n')
+
+export const requestOtpResponse = zod.object({
+  "challengeId": zod.string().uuid()
+}).describe('Constant shape regardless of eligibility — never reveals whether the supplied roll number\/relationship is actually registered.\n')
+
+
+/**
+ * Verifies the code against the phone number bound to challengeId server-side. On success, returns real Supabase session tokens for the client to adopt via supabase.auth.setSession() — the client never calls Supabase's own OTP endpoints directly. Never distinguishes an unknown/expired/exhausted/ineligible challenge from a genuinely wrong code — all fail identically (anti-enumeration).
+
+ * @summary Verify an OTP challenge and obtain a Supabase session
+ */
+
+
+
+export const verifyOtpBody = zod.object({
+  "challengeId": zod.string().uuid(),
+  "code": zod.string().min(1)
+}).describe('Deliberately has no phone field — the phone bound to challengeId is resolved server-side.\n')
+
+export const verifyOtpResponse = zod.object({
+  "accessToken": zod.string(),
+  "refreshToken": zod.string()
+}).describe('Real Supabase session tokens — the client adopts these locally via supabase.auth.setSession(), never receiving a phone number at any point in this flow.\n')
 
 
 /**
@@ -67,6 +118,24 @@ export const getLeaveRequestResponse = zod.object({
   "createdAt": zod.string().datetime({}),
   "updatedAt": zod.string().datetime({})
 })
+
+
+/**
+ * @summary Get a leave request's immutable approval-event timeline (Approval History) — authenticated owning student, or authenticated parent/guardian (relationship-checked). Same authorization/anti- enumeration shape as GET /leave-requests/{leaveRequestId}.
+
+ */
+export const listLeaveRequestEventsParams = zod.object({
+  "leaveRequestId": zod.string().uuid()
+})
+
+export const listLeaveRequestEventsResponseItem = zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['notified', 'responded', 'escalated', 'expired', 'manual_override']),
+  "response": zod.enum(['approved', 'rejected', 'no_response']).nullable(),
+  "biometricConfirmed": zod.boolean(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable leave_approval_events row (ADR-015). Deliberately excludes any actor identity field — never reveals which specific parent\/guardian\/staff member acted.\n')
+export const listLeaveRequestEventsResponse = zod.array(listLeaveRequestEventsResponseItem)
 
 
 /**

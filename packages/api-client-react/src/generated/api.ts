@@ -31,6 +31,33 @@ export const HealthStatusStatus = {
 
 export interface HealthStatus {
   status: HealthStatusStatus;
+  /** Whatever build identifier the deployment host injects (e.g. a git SHA); "unknown" when nothing is set (e.g. local dev).
+ */
+  version: string;
+}
+
+export type ReadyStatusStatus = typeof ReadyStatusStatus[keyof typeof ReadyStatusStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ReadyStatusStatus = {
+  ok: 'ok',
+} as const;
+
+export interface ReadyStatus {
+  status: ReadyStatusStatus;
+}
+
+export type NotReadyStatusStatus = typeof NotReadyStatusStatus[keyof typeof NotReadyStatusStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const NotReadyStatusStatus = {
+  not_ready: 'not_ready',
+} as const;
+
+export interface NotReadyStatus {
+  status: NotReadyStatusStatus;
 }
 
 /**
@@ -64,6 +91,44 @@ export interface LeaveRequest {
   updatedAt: string;
 }
 
+export type LeaveApprovalEventEventType = typeof LeaveApprovalEventEventType[keyof typeof LeaveApprovalEventEventType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const LeaveApprovalEventEventType = {
+  notified: 'notified',
+  responded: 'responded',
+  escalated: 'escalated',
+  expired: 'expired',
+  manual_override: 'manual_override',
+} as const;
+
+/**
+ * @nullable
+ */
+export type LeaveApprovalEventResponse = typeof LeaveApprovalEventResponse[keyof typeof LeaveApprovalEventResponse] | null;
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const LeaveApprovalEventResponse = {
+  approved: 'approved',
+  rejected: 'rejected',
+  no_response: 'no_response',
+} as const;
+
+/**
+ * One immutable leave_approval_events row (ADR-015). Deliberately excludes any actor identity field — never reveals which specific parent/guardian/staff member acted.
+
+ */
+export interface LeaveApprovalEvent {
+  id: string;
+  eventType: LeaveApprovalEventEventType;
+  /** @nullable */
+  response: LeaveApprovalEventResponse;
+  biometricConfirmed: boolean;
+  occurredAt: string;
+}
+
 /**
  * Student-supplied leave request fields only — never a student id (the authenticated caller's own student profile is always used, resolved server-side; docs/leave-approval-workflow.md's Critical Rule).
 
@@ -89,6 +154,56 @@ export interface BiometricAssertion {
 
 export interface LeaveDecisionRequest {
   biometricAssertion: BiometricAssertion;
+}
+
+/**
+ * Mirrors packages/db/src/schema/enums.ts's parent_relationship_type enum.
+ */
+export type ParentRelationshipType = typeof ParentRelationshipType[keyof typeof ParentRelationshipType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ParentRelationshipType = {
+  father: 'father',
+  mother: 'mother',
+  guardian: 'guardian',
+} as const;
+
+/**
+ * Deliberately has no phone field of any kind — the authoritative phone number is resolved entirely server-side and is never accepted from the client (F-02 core requirement).
+
+ */
+export interface RequestOtpBody {
+  /** @minLength 1 */
+  rollNumber: string;
+  relationshipType: ParentRelationshipType;
+}
+
+/**
+ * Deliberately has no phone field — the phone bound to challengeId is resolved server-side.
+
+ */
+export interface VerifyOtpBody {
+  challengeId: string;
+  /** @minLength 1 */
+  code: string;
+}
+
+/**
+ * Constant shape regardless of eligibility — never reveals whether the supplied roll number/relationship is actually registered.
+
+ */
+export interface OtpChallenge {
+  challengeId: string;
+}
+
+/**
+ * Real Supabase session tokens — the client adopts these locally via supabase.auth.setSession(), never receiving a phone number at any point in this flow.
+
+ */
+export interface OtpVerificationResult {
+  accessToken: string;
+  refreshToken: string;
 }
 
 export type ErrorBodyError = {
@@ -137,7 +252,9 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 
 /**
- * @summary Infrastructure health check
+ * Never touches the database — stays correct even if Postgres is briefly unreachable. This is the endpoint a deployment host's own container-restart health check should target (F-06).
+
+ * @summary Liveness check — is this process alive
  */
 export const healthCheck = (
     
@@ -184,7 +301,7 @@ export type HealthCheckQueryError = unknown
 
 
 /**
- * @summary Infrastructure health check
+ * @summary Liveness check — is this process alive
  */
 
 export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, TError = unknown>(
@@ -205,6 +322,213 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
 
 
+/**
+ * Verifies the one dependency every route and every pg-boss worker shares (Postgres), via a trivial query — never a business query (F-06). Never returns the underlying error's message/stack.
+
+ * @summary Readiness check — can this instance serve production traffic
+ */
+export const readinessCheck = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ReadyStatus>(
+      {url: `/readyz`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getReadinessCheckQueryKey = () => {
+    return [
+    `/readyz`
+    ] as const;
+    }
+
+    
+export const getReadinessCheckQueryOptions = <TData = Awaited<ReturnType<typeof readinessCheck>>, TError = NotReadyStatus>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof readinessCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getReadinessCheckQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof readinessCheck>>> = ({ signal }) => readinessCheck(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof readinessCheck>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ReadinessCheckQueryResult = NonNullable<Awaited<ReturnType<typeof readinessCheck>>>
+export type ReadinessCheckQueryError = NotReadyStatus
+
+
+/**
+ * @summary Readiness check — can this instance serve production traffic
+ */
+
+export function useReadinessCheck<TData = Awaited<ReturnType<typeof readinessCheck>>, TError = NotReadyStatus>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof readinessCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getReadinessCheckQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Resolves rollNumber + relationshipType to an authoritative parent phone number server-side and, if eligible, dispatches an OTP to it. The response is always the same shape regardless of eligibility (anti-enumeration) — the client never learns whether a given roll number/relationship is registered. No phone number is ever accepted from or returned to the client.
+
+ * @summary Request an OTP for parent/guardian login (F-02 remediation, ADR-020's required eligibility pre-check)
+
+ */
+export const requestOtp = (
+    requestOtpBody: RequestOtpBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<OtpChallenge>(
+      {url: `/auth/otp/request`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: requestOtpBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getRequestOtpMutationOptions = <TError = ValidationErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestOtp>>, TError,{data: RequestOtpBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestOtp>>, TError,{data: RequestOtpBody}, TContext> => {
+
+const mutationKey = ['requestOtp'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestOtp>>, {data: RequestOtpBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestOtp(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestOtpMutationResult = NonNullable<Awaited<ReturnType<typeof requestOtp>>>
+    export type RequestOtpMutationBody = RequestOtpBody
+    export type RequestOtpMutationError = ValidationErrorResponse
+
+    /**
+ * @summary Request an OTP for parent/guardian login (F-02 remediation, ADR-020's required eligibility pre-check)
+
+ */
+export const useRequestOtp = <TError = ValidationErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestOtp>>, TError,{data: RequestOtpBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof requestOtp>>,
+        TError,
+        {data: RequestOtpBody},
+        TContext
+      > => {
+
+      const mutationOptions = getRequestOtpMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Verifies the code against the phone number bound to challengeId server-side. On success, returns real Supabase session tokens for the client to adopt via supabase.auth.setSession() — the client never calls Supabase's own OTP endpoints directly. Never distinguishes an unknown/expired/exhausted/ineligible challenge from a genuinely wrong code — all fail identically (anti-enumeration).
+
+ * @summary Verify an OTP challenge and obtain a Supabase session
+ */
+export const verifyOtp = (
+    verifyOtpBody: VerifyOtpBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<OtpVerificationResult>(
+      {url: `/auth/otp/verify`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: verifyOtpBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getVerifyOtpMutationOptions = <TError = ValidationErrorResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyOtp>>, TError,{data: VerifyOtpBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyOtp>>, TError,{data: VerifyOtpBody}, TContext> => {
+
+const mutationKey = ['verifyOtp'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyOtp>>, {data: VerifyOtpBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  verifyOtp(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyOtpMutationResult = NonNullable<Awaited<ReturnType<typeof verifyOtp>>>
+    export type VerifyOtpMutationBody = VerifyOtpBody
+    export type VerifyOtpMutationError = ValidationErrorResponse | ErrorBody
+
+    /**
+ * @summary Verify an OTP challenge and obtain a Supabase session
+ */
+export const useVerifyOtp = <TError = ValidationErrorResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyOtp>>, TError,{data: VerifyOtpBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof verifyOtp>>,
+        TError,
+        {data: VerifyOtpBody},
+        TContext
+      > => {
+
+      const mutationOptions = getVerifyOtpMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
 /**
  * @summary Create a leave request (authenticated student, for themselves only)
  */
@@ -402,6 +726,77 @@ export function useGetLeaveRequest<TData = Awaited<ReturnType<typeof getLeaveReq
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetLeaveRequestQueryOptions(leaveRequestId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * @summary Get a leave request's immutable approval-event timeline (Approval History) — authenticated owning student, or authenticated parent/guardian (relationship-checked). Same authorization/anti- enumeration shape as GET /leave-requests/{leaveRequestId}.
+
+ */
+export const listLeaveRequestEvents = (
+    leaveRequestId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<LeaveApprovalEvent[]>(
+      {url: `/leave-requests/${leaveRequestId}/events`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListLeaveRequestEventsQueryKey = (leaveRequestId?: string,) => {
+    return [
+    `/leave-requests/${leaveRequestId}/events`
+    ] as const;
+    }
+
+    
+export const getListLeaveRequestEventsQueryOptions = <TData = Awaited<ReturnType<typeof listLeaveRequestEvents>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(leaveRequestId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listLeaveRequestEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListLeaveRequestEventsQueryKey(leaveRequestId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLeaveRequestEvents>>> = ({ signal }) => listLeaveRequestEvents(leaveRequestId, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(leaveRequestId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLeaveRequestEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListLeaveRequestEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listLeaveRequestEvents>>>
+export type ListLeaveRequestEventsQueryError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+
+/**
+ * @summary Get a leave request's immutable approval-event timeline (Approval History) — authenticated owning student, or authenticated parent/guardian (relationship-checked). Same authorization/anti- enumeration shape as GET /leave-requests/{leaveRequestId}.
+
+ */
+
+export function useListLeaveRequestEvents<TData = Awaited<ReturnType<typeof listLeaveRequestEvents>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(
+ leaveRequestId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listLeaveRequestEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListLeaveRequestEventsQueryOptions(leaveRequestId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

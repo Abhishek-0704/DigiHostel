@@ -26,11 +26,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    secureStorage.getItem(STORAGE_KEYS.themePreference).then((stored) => {
-      if (!cancelled && (stored === "light" || stored === "dark" || stored === "system")) {
-        setPreferenceState(stored);
-      }
-    });
+    secureStorage
+      .getItem(STORAGE_KEYS.themePreference)
+      .then((stored) => {
+        if (!cancelled && (stored === "light" || stored === "dark" || stored === "system")) {
+          setPreferenceState(stored);
+        }
+      })
+      .catch(() => {
+        // No stored preference (or storage unavailable) — falls back to the
+        // "system" default already set above; never a crash.
+      });
     return () => {
       cancelled = true;
     };

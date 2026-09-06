@@ -1,0 +1,98 @@
+name: CI
+
+# F-06 remediation (PRR Phase 13) — the authoritative CI gate for DigiHostel.
+# Runs on every pull request and every push to main; every step must pass
+# for the workflow to succeed (no step is advisory/continue-on-error).
+#
+# Versions are pinned to exactly what this repository's own development
+# environment resolves today (Node 24.19.0, pnpm 11.25.0 via corepack,
+# Supabase CLI 2.116.0) — see docs/current-state.md's own "no project-level
+# version pin recorded yet" note. This workflow is the first place those
+# versions become pinned; it does not silently upgrade anything.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pnpm
+        run: corepack prepare pnpm@11.25.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format check
+        run: pnpm run format
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      - name: Start local Supabase (applies all committed migrations)
+        run: supabase start
+
+      - name: Run pgTAP (RLS/authorization database tests)
+        run: supabase test db
+
+      - name: Export local Supabase connection details
+        run: supabase status -o env >> "$GITHUB_ENV"
+
+      - name: Run test suite (unit + real-Postgres integration, DATABASE_URL/SUPABASE_URL/SUPABASE_ANON_KEY set from the step above)
+        run: pnpm exec vitest run
+        env:
+          DATABASE_URL: ${{ env.DB_URL }}
+          SUPABASE_URL: ${{ env.API_URL }}
+          SUPABASE_ANON_KEY: ${{ env.ANON_KEY }}
+
+      - name: Build
+        run: pnpm run build
+
+  deploy-api:
+    name: Deploy apps/api
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # ADR-021 + F-06 Phase 3 — apps/api deploys to a persistent-process
+      # host (selected: Render; see docs/runbooks/production-deployment.md
+      # §3), never Vercel. Render builds the image itself, server-side, from
+      # apps/api/Dockerfile — this job only triggers that build via Render's
+      # Deploy Hook, matching this workflow's existing pattern
+      # (deploy-migrations.yml) of "GitHub Actions triggers the deploy, the
+      # platform performs it," rather than building/pushing an image from
+      # CI itself. Until RENDER_DEPLOY_HOOK_URL is configured (it isn't
+      # yet — no Render service has been provisioned), this step fails fast
+      # and clearly rather than doing anything partial.
+      - name: Trigger Render deploy
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_URL is not configured — no persistent-process host has been provisioned yet (see docs/runbooks/production-deployment.md)."
+            exit 1
+          fi
+          curl --fail --silent --show-error -X POST "$RENDER_DEPLOY_HOOK_URL"
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}

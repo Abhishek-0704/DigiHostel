@@ -3,6 +3,7 @@ import { buildApp } from "../app.js";
 import { FakeAuthDbPort } from "../lib/auth/__fixtures__/fake-db-port.js";
 import { generateTestKeyPair, signTestJwt } from "../lib/auth/__fixtures__/test-jwt.js";
 import { createJwtVerifier } from "../lib/auth/jwt.js";
+import { FakeOtpSender } from "../domain/auth/__fixtures__/fake-otp-sender.js";
 import type { KeyLike } from "jose";
 
 // End-to-end through the real Fastify app (app.ts + plugins/auth.ts +
@@ -34,14 +35,17 @@ describe("test-auth routes (end-to-end through the real app)", () => {
       async () => publicKey,
     );
 
-    return buildApp({ authOverrides: { jwtVerifier, authDbPort: db } });
+    return buildApp({
+      authOverrides: { jwtVerifier, authDbPort: db },
+      otpAuthOverrides: { otpSender: new FakeOtpSender() },
+    });
   }
 
   it("GET /api/v1/healthz stays public — unaffected by the auth boundary", async () => {
     const app = await buildTestApp();
     const response = await app.inject({ method: "GET", url: "/api/v1/healthz" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ status: "ok" });
+    expect(response.json()).toEqual({ status: "ok", version: "unknown" });
     await app.close();
   });
 

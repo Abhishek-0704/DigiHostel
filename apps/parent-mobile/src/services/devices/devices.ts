@@ -1,7 +1,12 @@
 import { getSupabaseClient } from "../supabase/client";
+import { deviceIdentityService } from "../deviceIdentity/deviceIdentity";
+import { DeviceServiceNotImplementedError } from "./deviceServiceErrors";
+
+export { DeviceServiceNotImplementedError } from "./deviceServiceErrors";
 
 /**
- * Trusted-device service (Prompt 2 foundation; extended in Prompt 3).
+ * Trusted-device service (Prompt 2 foundation; extended in Prompt 3;
+ * extended again in Prompt 4B for device-management presentation).
  *
  * `hasActiveTrustedDevice()` and `listTrustedDevices()` are REAL — they
  * read `trusted_devices` directly via the Supabase client, relying entirely
@@ -18,26 +23,47 @@ import { getSupabaseClient } from "../supabase/client";
  *
  * `registerCurrentDevice()` remains fail-closed and unimplemented: ADR-003
  * requires platform attestation (Play Integrity / App Attest) *before* a
- * device is marked trusted, and RLS's `trusted_devices_insert_own` policy
- * — while technically permissive — has no way to verify attestation
- * happened. Implementing registration as a raw INSERT would let this app
- * mark itself trusted without ever satisfying ADR-003's mandatory gate;
- * that is exactly the "fabricate a successful registration" failure mode
- * this prompt's G-04 constraint forbids. This stays unimplemented until a
- * real attestation-verification integration point exists (backend and/or
- * mobile SDK work neither of which exists yet — see docs/current-state.md).
+ * device is marked trusted. There is no longer even an RLS policy that
+ * would let this app self-INSERT a `trusted_devices` row — `authenticated`
+ * has no INSERT policy on this table at all (PRR Phase 13, Finding F-01
+ * remediation: the previous `trusted_devices_insert_own` policy let any
+ * authenticated parent self-insert a fully active row with no attestation
+ * check, which this comment used to (accurately, at the time) call "technically
+ * permissive" — it has since been removed, `supabase/migrations/0003_f01_trusted_devices_rls_remediation.sql`).
+ * Real device registration, once implemented, must go through the backend's
+ * own privileged connection after verifying attestation server-side — RLS
+ * cannot verify a Play Integrity/App Attest result, so no client-facing
+ * INSERT policy on this table can ever be correct. This stays unimplemented
+ * until a real attestation-verification integration point exists (backend
+ * and/or mobile SDK work neither of which exists yet — see docs/current-state.md).
  *
- * `revokeDevice()` also remains unimplemented in this prompt — not because
- * it's unsafe (revoking one's own device only *reduces* access and could,
- * in principle, be a direct RLS-scoped UPDATE via `trusted_devices_revoke_own`),
- * but because "Full Device Management" is explicitly Prompt 6's scope, not
- * this one's. Documented here as a scoping decision, not a technical block.
+ * `revokeDevice()` also remains unimplemented (Prompt 4B): revoking one's
+ * own device only *reduces* access and could, in principle, be a direct
+ * RLS-scoped UPDATE via `trusted_devices_revoke_own` — but a raw client
+ * UPDATE would let this app revoke a device with no audit trail, no
+ * confirmation the backend has consistent state, and no coordination with
+ * `device_attestation_events`. Implementing it as a bare UPDATE here would
+ * be exactly the kind of "backend security logic in the client" Prompt 4B's
+ * own instructions forbid inventing. It stays fail-closed until a real,
+ * backend-owned removal endpoint exists (tracked the same way as
+ * registration — see docs/authentication.md §15).
  */
+
+export type DeviceTrustState = "active" | "revoked";
 
 export interface TrustedDeviceSummary {
   id: string;
   platform: "ios" | "android";
   registeredAt: string;
+  /** Null for an active device. */
+  revokedAt: string | null;
+  /** Null for an active device, or a revoked device with no reason on record. */
+  revokedReason: string | null;
+  /** True only when this row's stored `device_fingerprint` matches this
+   * installation's own id (`deviceIdentityService`) — a real comparison,
+   * not a hardcoded value. Will be false for every device until a real
+   * registration flow exists to ever set a matching fingerprint (see
+   * `registerCurrentDevice` above) — that is expected, not a bug. */
   isCurrentDevice: boolean;
 }
 
@@ -47,29 +73,23 @@ export interface DeviceService {
    * "authenticated" and "device_verification_required" — a UX routing
    * signal only, never itself a grant of access to a protected operation. */
   hasActiveTrustedDevice(): Promise<boolean>;
-  /** Real, RLS-backed list of the current parent's trusted devices.
-   * `isCurrentDevice` is always false today — no device this app is running
-   * on has ever been registered (registration is unimplemented), so there
-   * is nothing yet to match against `deviceIdentityService`'s installation id. */
+  /** Real, RLS-backed list of every trusted-device row belonging to the
+   * current parent — active AND revoked, newest first. Revoked rows are
+   * included deliberately (unlike `hasActiveTrustedDevice`) so a
+   * device-management UI can show real history rather than silently
+   * hiding a device the moment it's revoked. */
   listTrustedDevices(): Promise<TrustedDeviceSummary[]>;
   registerCurrentDevice(): Promise<TrustedDeviceSummary>;
   revokeDevice(deviceId: string): Promise<void>;
-}
-
-export class DeviceServiceNotImplementedError extends Error {
-  constructor(operation: string) {
-    super(
-      `Trusted-device ${operation} is not implemented yet in the Parent app. ` +
-        "See docs/current-state.md's G-04 status and apps/parent-mobile/docs/authentication.md.",
-    );
-    this.name = "DeviceServiceNotImplementedError";
-  }
 }
 
 interface TrustedDeviceRow {
   id: string;
   platform: string;
   registered_at: string;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+  device_fingerprint: string;
 }
 
 export const deviceService: DeviceService = {
@@ -84,17 +104,21 @@ export const deviceService: DeviceService = {
   },
 
   async listTrustedDevices() {
-    const { data, error } = await getSupabaseClient()
-      .from("trusted_devices")
-      .select("id, platform, registered_at")
-      .is("revoked_at", null)
-      .order("registered_at", { ascending: false });
+    const [{ data, error }, currentInstallationId] = await Promise.all([
+      getSupabaseClient()
+        .from("trusted_devices")
+        .select("id, platform, registered_at, revoked_at, revoked_reason, device_fingerprint")
+        .order("registered_at", { ascending: false }),
+      deviceIdentityService.getInstallationId(),
+    ]);
     if (error) throw error;
     return ((data ?? []) as TrustedDeviceRow[]).map((row) => ({
       id: row.id,
       platform: row.platform === "ios" ? "ios" : "android",
       registeredAt: row.registered_at,
-      isCurrentDevice: false,
+      revokedAt: row.revoked_at,
+      revokedReason: row.revoked_reason,
+      isCurrentDevice: row.device_fingerprint === currentInstallationId,
     }));
   },
 
@@ -103,6 +127,6 @@ export const deviceService: DeviceService = {
   },
 
   async revokeDevice(): Promise<never> {
-    throw new DeviceServiceNotImplementedError("revocation (Prompt 6 scope)");
+    throw new DeviceServiceNotImplementedError("removal");
   },
 };

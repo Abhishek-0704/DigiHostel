@@ -238,6 +238,34 @@ describe.skipIf(!RUN)("LeaveRepository (real Postgres integration)", () => {
     expect(events).toHaveLength(0);
   });
 
+  describe("listEventsForLeaveRequest (Approval History, Phase 4 Prompt 10)", () => {
+    it("returns real leave_approval_events rows, oldest first, mapped without actor identity", async () => {
+      const leaveRequestId = await freshLeaveRequestId();
+
+      // Two real transitions against the real DB, exercising the actual
+      // insert path (decide() itself), not a fabricated row.
+      const decided = await repository.decide({
+        leaveRequestId,
+        actingParentId: PARENT_ID,
+        decision: "approved",
+        biometricAssertion: { assertionToken: "tok", actionId: "leave-decision" },
+      });
+      expect(decided.kind).toBe("success");
+
+      const events = await repository.listEventsForLeaveRequest(leaveRequestId);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ eventType: "responded", response: "approved" });
+      expect(events[0]).not.toHaveProperty("actorParentId");
+      expect(events[0]).not.toHaveProperty("actorStaffId");
+    });
+
+    it("returns an empty array for a request with no events yet", async () => {
+      const leaveRequestId = await freshLeaveRequestId();
+      const events = await repository.listEventsForLeaveRequest(leaveRequestId);
+      expect(events).toEqual([]);
+    });
+  });
+
   it("create: student creation is atomic — inserts the leave_requests row (default pending) and exactly one audit_logs row, no leave_approval_events row", async () => {
     const view = await repository.create({
       studentId: STUDENT_ID,

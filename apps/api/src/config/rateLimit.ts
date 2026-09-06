@@ -53,3 +53,25 @@ export const RATE_LIMIT_EXPIRE: RateLimitTier = {
   max: envNumber("RATE_LIMIT_EXPIRE_MAX", 30),
   timeWindow: envNumber("RATE_LIMIT_EXPIRE_WINDOW_MS", 60_000),
 };
+
+/** F-02 remediation (PRR Phase 13) — the OTP-request endpoint triggers a
+ * real SMS send for an eligible roll number/relationship, so this is the
+ * single most cost-sensitive route in the API; deliberately the strictest
+ * tier here, independent of and in addition to Supabase's own
+ * `max_frequency` floor (which this backend cannot see or rely on being
+ * configured any particular way in a given deployment). A legitimate
+ * parent needs at most a handful of attempts per minute (typo correction,
+ * one resend). */
+export const RATE_LIMIT_OTP_REQUEST: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_OTP_REQUEST_MAX", 5),
+  timeWindow: envNumber("RATE_LIMIT_OTP_REQUEST_WINDOW_MS", 60_000),
+};
+
+/** OTP verification — a code-guessing target. `OtpChallengeStore`'s own
+ * per-challenge attempt cap (5) is the primary defense; this IP-level tier
+ * is a second, independent layer bounding how many *different* challenges a
+ * single caller can hammer per minute. */
+export const RATE_LIMIT_OTP_VERIFY: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_OTP_VERIFY_MAX", 10),
+  timeWindow: envNumber("RATE_LIMIT_OTP_VERIFY_WINDOW_MS", 60_000),
+};

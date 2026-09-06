@@ -1,64 +1,68 @@
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import type { ParentRelationshipType } from "@digihostel/api-client-react";
 import { PageContainer } from "@/src/components/layout/PageContainer";
 import { PageHeader } from "@/src/components/layout/PageHeader";
 import { TextField } from "@/src/components/ui/TextField";
 import { Button } from "@/src/components/ui/Button";
+import { SelectableChip } from "@/src/components/ui/SelectableChip";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useTheme } from "@/src/hooks/useTheme";
 import { toAppError, type AppError } from "@/src/types/errors";
-import {
-  COUNTRY_CODE,
-  LOCAL_NUMBER_LENGTH,
-  validateLocalPhoneNumber,
-} from "@/src/features/authentication/validation";
+import { RELATIONSHIP_OPTIONS, isValidRollNumber } from "@/src/features/authentication/validation";
 
 /**
- * Login screen (Prompt 4A). Presentation + orchestration only — the actual
- * OTP send call is `useAuth().sendOtp`, Prompt 3's existing action. No
- * Supabase call happens directly in this file.
+ * Login screen (F-02 remediation, PRR Phase 13). Presentation + orchestration
+ * only — the actual eligibility/OTP-request call is `useAuth().requestOtp`.
+ * No Supabase call happens directly in this file, and no phone number field
+ * exists anywhere on this screen: the client submits a roll number +
+ * relationship, and the backend resolves the authoritative parent phone
+ * number entirely server-side (ADR-020's required pre-check), never
+ * returning it to this app.
  *
- * Country code is a fixed, non-editable "+91" — the SDD/ADRs specify no
- * multi-country requirement for this KIIT-hostel-specific MVP, and a
- * country picker would be speculative scope; see docs/authentication.md.
- *
- * Security boundary (explicit, per this prompt's constraint): this screen
- * cannot and does not determine whether the entered number belongs to a
- * registered parent — that pre-check has no backend endpoint yet (ADR-020,
- * documented in docs/authentication.md). `sendOtp` is called as Prompt 3
- * implements it today; any resulting error is mapped through the existing
- * safe error taxonomy, never presented as a raw backend/Supabase message.
+ * This screen cannot and does not determine whether the entered roll
+ * number/relationship is actually registered — the backend's response is
+ * deliberately identical either way (anti-enumeration); any resulting error
+ * is mapped through the existing safe error taxonomy, never presented as a
+ * raw backend message.
  */
 export default function Login() {
   const router = useRouter();
   const { theme } = useTheme();
-  const { sendOtp } = useAuth();
+  const { requestOtp } = useAuth();
 
-  const [localNumber, setLocalNumber] = useState("");
+  const [rollNumber, setRollNumber] = useState("");
+  const [relationshipType, setRelationshipType] = useState<ParentRelationshipType | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<AppError | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleChangeText = (text: string) => {
-    const digits = text.replace(/[^0-9]/g, "").slice(0, LOCAL_NUMBER_LENGTH);
-    setLocalNumber(digits);
+    setRollNumber(text);
     if (fieldError) setFieldError(null);
     if (submitError) setSubmitError(null);
   };
 
   const handleContinue = async () => {
-    const validation = validateLocalPhoneNumber(localNumber);
-    if (!validation.valid) {
-      setFieldError(validation.message);
+    const trimmedRollNumber = rollNumber.trim();
+    if (!isValidRollNumber(trimmedRollNumber)) {
+      setFieldError("Enter your ward's roll number.");
+      return;
+    }
+    if (!relationshipType) {
+      setFieldError("Select your relationship to the student.");
       return;
     }
 
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      await sendOtp(validation.fullNumber);
-      router.push({ pathname: "/(auth)/otp", params: { phone: validation.fullNumber } });
+      const { challengeId } = await requestOtp(trimmedRollNumber, relationshipType);
+      router.push({
+        pathname: "/(auth)/otp",
+        params: { challengeId, rollNumber: trimmedRollNumber, relationshipType },
+      });
     } catch (err) {
       setSubmitError(toAppError(err));
     } finally {
@@ -66,7 +70,7 @@ export default function Login() {
     }
   };
 
-  const canContinue = localNumber.length === LOCAL_NUMBER_LENGTH && !isSubmitting;
+  const canContinue = isValidRollNumber(rollNumber) && relationshipType !== null && !isSubmitting;
 
   return (
     <KeyboardAvoidingView
@@ -75,44 +79,44 @@ export default function Login() {
     >
       <PageContainer>
         <PageHeader
-          title="Enter your mobile number"
-          subtitle="We'll send a one-time verification code to confirm it's you."
+          title="Sign in as a parent or guardian"
+          subtitle="Enter your ward's roll number and your relationship to them. We'll send a one-time verification code to the registered mobile number."
         />
 
-        <View style={styles.inputRow}>
-          <View
-            style={[
-              styles.codeBox,
-              {
-                borderColor: theme.colors.border,
-                borderRadius: theme.radii.md,
-                backgroundColor: theme.colors.surfaceVariant,
-              },
-            ]}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-          >
-            <Text style={[styles.codeText, { color: theme.colors.textPrimary }]}>
-              {COUNTRY_CODE}
-            </Text>
-          </View>
-          <View style={styles.flex}>
-            <TextField
-              value={localNumber}
-              onChangeText={handleChangeText}
-              placeholder="10-digit mobile number"
-              keyboardType="number-pad"
-              maxLength={LOCAL_NUMBER_LENGTH}
-              textContentType="telephoneNumber"
-              autoComplete="tel"
-              accessibilityLabel={`Mobile number, country code ${COUNTRY_CODE}`}
-              errorMessage={fieldError ?? undefined}
-              editable={!isSubmitting}
-              returnKeyType="done"
-              onSubmitEditing={handleContinue}
+        <TextField
+          value={rollNumber}
+          onChangeText={handleChangeText}
+          placeholder="Roll number"
+          autoCapitalize="characters"
+          autoComplete="off"
+          accessibilityLabel="Ward's roll number"
+          editable={!isSubmitting}
+          returnKeyType="done"
+        />
+
+        <View style={[styles.chipRow, { marginTop: theme.spacing.md }]}>
+          {RELATIONSHIP_OPTIONS.map((option) => (
+            <SelectableChip
+              key={option.value}
+              label={option.label}
+              selected={relationshipType === option.value}
+              onPress={() => {
+                setRelationshipType(option.value);
+                if (fieldError) setFieldError(null);
+                if (submitError) setSubmitError(null);
+              }}
             />
-          </View>
+          ))}
         </View>
+
+        {fieldError ? (
+          <Text
+            accessibilityRole="alert"
+            style={[styles.submitError, { color: theme.colors.error, marginTop: theme.spacing.sm }]}
+          >
+            {fieldError}
+          </Text>
+        ) : null}
 
         {submitError ? (
           <Text
@@ -130,7 +134,7 @@ export default function Login() {
             loading={isSubmitting}
             disabled={!canContinue}
             onPress={handleContinue}
-            accessibilityHint="Sends a verification code to your mobile number"
+            accessibilityHint="Sends a verification code to the registered mobile number"
           />
         </View>
       </PageContainer>
@@ -140,14 +144,6 @@ export default function Login() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  inputRow: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
-  codeBox: {
-    height: 44,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  codeText: { fontSize: 16, fontWeight: "600" },
+  chipRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
   submitError: { fontSize: 13 },
 });

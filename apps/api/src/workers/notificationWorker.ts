@@ -13,13 +13,20 @@ import { logger } from "../lib/logger.js";
 
 /**
  * One attempt at delivering one already-identified logical notification
- * (ADR-018 §2-§5). Claims the specific attempt (retryCount-gated conditional
- * update, mirroring decide()'s pattern), sends, and either records success,
- * schedules the next retry, or records permanent failure — always without
- * blocking the leave-escalation state machine (retry policy is independent
- * of escalation timing; a failed/stuck notification never prevents the
- * authoritative leave-request status from advancing — the escalation worker
- * runs on its own schedule, untouched by anything here).
+ * (ADR-018 §2-§5). Claims the specific attempt (lease-gated conditional
+ * update — F-03, PRR Phase 13; mirrors decide()'s conditional-UPDATE
+ * pattern), sends, and either records success, schedules the next retry, or
+ * records permanent failure — always without blocking the leave-escalation
+ * state machine (retry policy is independent of escalation timing; a
+ * failed/stuck notification never prevents the authoritative leave-request
+ * status from advancing — the escalation worker runs on its own schedule,
+ * untouched by anything here).
+ *
+ * Never passed a caller-supplied retry count (F-03's fix): `claimAttempt`
+ * derives eligibility entirely from the row's own current state, so this
+ * function is safe to invoke from three different sources — the initial
+ * stage-triggered job, a self-scheduled retry, or the reaper reclaiming a
+ * stale attempt — without needing to know which one triggered it.
  */
 async function attemptDelivery(
   repo: NotificationRepository,
@@ -27,12 +34,11 @@ async function attemptDelivery(
   scheduler: JobScheduler,
   leaveRequestId: string,
   notificationId: string,
-  currentRetryCount: number,
 ): Promise<void> {
-  const claimed = await repo.claimAttempt(notificationId, currentRetryCount);
+  const claimed = await repo.claimAttempt(notificationId);
   if (!claimed) {
-    // Another worker already claimed/completed this exact attempt, or the
-    // row reached a terminal status in the meantime — clean no-op.
+    // Someone else currently holds an unexpired lease on this exact
+    // attempt, or the row already reached a terminal status — clean no-op.
     return;
   }
 
@@ -67,7 +73,6 @@ async function attemptDelivery(
       leaveRequestId,
       stage: claimed.stage,
       notificationId: claimed.id,
-      expectedRetryCount: attemptsMade,
     },
     {
       startAfterMs: delayMs,
@@ -84,16 +89,12 @@ export async function processNotificationJob(
   sender: PushSender,
   scheduler: JobScheduler,
 ): Promise<void> {
-  if (payload.notificationId !== undefined && payload.expectedRetryCount !== undefined) {
-    // Self-scheduled retry for one already-created logical notification.
-    await attemptDelivery(
-      repo,
-      sender,
-      scheduler,
-      payload.leaveRequestId,
-      payload.notificationId,
-      payload.expectedRetryCount,
-    );
+  if (payload.notificationId !== undefined) {
+    // Targets one already-created logical notification — a self-scheduled
+    // retry, or a reaper-triggered reclaim (F-03). Either way,
+    // attemptDelivery/claimAttempt re-derive eligibility from the row's own
+    // current state; nothing here needs to know or care which case this is.
+    await attemptDelivery(repo, sender, scheduler, payload.leaveRequestId, payload.notificationId);
     return;
   }
 
@@ -110,7 +111,7 @@ export async function processNotificationJob(
     if (row.status === "sent" || row.status === "delivered") {
       continue; // already handled — idempotent re-entry (a redelivered job)
     }
-    await attemptDelivery(repo, sender, scheduler, payload.leaveRequestId, row.id, row.retryCount);
+    await attemptDelivery(repo, sender, scheduler, payload.leaveRequestId, row.id);
   }
 }
 

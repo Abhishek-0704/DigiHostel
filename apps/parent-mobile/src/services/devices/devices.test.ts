@@ -12,7 +12,12 @@ vi.mock("../supabase/client", () => ({
   getSupabaseClient: () => ({ from: fakeFrom }),
 }));
 
-// Imported AFTER the mock is registered.
+const fakeGetInstallationId = vi.fn();
+vi.mock("../deviceIdentity/deviceIdentity", () => ({
+  deviceIdentityService: { getInstallationId: () => fakeGetInstallationId() },
+}));
+
+// Imported AFTER the mocks are registered.
 const { deviceService, DeviceServiceNotImplementedError } = await import("./devices");
 
 function makeQueryBuilder(result: { data: unknown; error: unknown }) {
@@ -51,12 +56,23 @@ describe("deviceService.hasActiveTrustedDevice", () => {
 describe("deviceService.listTrustedDevices", () => {
   beforeEach(() => {
     fakeFrom.mockReset();
+    fakeGetInstallationId.mockReset();
+    fakeGetInstallationId.mockResolvedValue("this-installation-id");
   });
 
-  it("maps rows to TrustedDeviceSummary, always with isCurrentDevice: false (no registration flow exists yet to ever set it true)", async () => {
+  it("maps an active row to TrustedDeviceSummary with null revocation fields", async () => {
     fakeFrom.mockReturnValue(
       makeQueryBuilder({
-        data: [{ id: "device-1", platform: "android", registered_at: "2026-01-01T00:00:00Z" }],
+        data: [
+          {
+            id: "device-1",
+            platform: "android",
+            registered_at: "2026-01-01T00:00:00Z",
+            revoked_at: null,
+            revoked_reason: null,
+            device_fingerprint: "some-other-installation-id",
+          },
+        ],
         error: null,
       }),
     );
@@ -66,9 +82,74 @@ describe("deviceService.listTrustedDevices", () => {
         id: "device-1",
         platform: "android",
         registeredAt: "2026-01-01T00:00:00Z",
+        revokedAt: null,
+        revokedReason: null,
         isCurrentDevice: false,
       },
     ]);
+  });
+
+  it("includes revoked rows (unlike hasActiveTrustedDevice) with their revocation fields populated", async () => {
+    fakeFrom.mockReturnValue(
+      makeQueryBuilder({
+        data: [
+          {
+            id: "device-2",
+            platform: "ios",
+            registered_at: "2026-01-01T00:00:00Z",
+            revoked_at: "2026-02-01T00:00:00Z",
+            revoked_reason: "removed by user",
+            device_fingerprint: "some-other-installation-id",
+          },
+        ],
+        error: null,
+      }),
+    );
+    const [device] = await deviceService.listTrustedDevices();
+    expect(device.revokedAt).toBe("2026-02-01T00:00:00Z");
+    expect(device.revokedReason).toBe("removed by user");
+  });
+
+  it("sets isCurrentDevice: true only when the row's device_fingerprint matches this installation's real id", async () => {
+    fakeGetInstallationId.mockResolvedValue("matching-id");
+    fakeFrom.mockReturnValue(
+      makeQueryBuilder({
+        data: [
+          {
+            id: "device-3",
+            platform: "android",
+            registered_at: "2026-01-01T00:00:00Z",
+            revoked_at: null,
+            revoked_reason: null,
+            device_fingerprint: "matching-id",
+          },
+        ],
+        error: null,
+      }),
+    );
+    const [device] = await deviceService.listTrustedDevices();
+    expect(device.isCurrentDevice).toBe(true);
+  });
+
+  it("never exposes device_fingerprint on the returned summary", async () => {
+    fakeFrom.mockReturnValue(
+      makeQueryBuilder({
+        data: [
+          {
+            id: "device-4",
+            platform: "android",
+            registered_at: "2026-01-01T00:00:00Z",
+            revoked_at: null,
+            revoked_reason: null,
+            device_fingerprint: "matching-id",
+          },
+        ],
+        error: null,
+      }),
+    );
+    const [device] = await deviceService.listTrustedDevices();
+    expect(device).not.toHaveProperty("device_fingerprint");
+    expect(device).not.toHaveProperty("deviceFingerprint");
   });
 });
 
@@ -79,7 +160,7 @@ describe("deviceService.registerCurrentDevice / revokeDevice — fail-closed by 
     );
   });
 
-  it("revokeDevice always throws — deferred to Prompt 6, not attempted here", async () => {
+  it("revokeDevice always throws — no backend removal endpoint exists yet", async () => {
     await expect(deviceService.revokeDevice("some-id")).rejects.toBeInstanceOf(
       DeviceServiceNotImplementedError,
     );

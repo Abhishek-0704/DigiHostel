@@ -30,6 +30,7 @@ OpenAPI is the source contract when implemented in the repository; generated Zod
 - `POST /api/v1/leave-requests` — authenticated student creates a leave request for themselves (`201`, initial state `pending`)
 - `GET /api/v1/leave-requests` — authenticated student's own leave requests, newest first
 - `GET /api/v1/leave-requests/{leaveRequestId}` — authenticated owning student, OR authenticated parent/guardian, relationship-checked (404 for both nonexistent and unrelated/not-owned — anti-enumeration)
+- `GET /api/v1/leave-requests/{leaveRequestId}/events` — same authorization/anti-enumeration shape as the GET above; returns the leave request's immutable approval-event timeline (`leave_approval_events`, ADR-015), oldest first, never including which specific parent/guardian/staff member acted (Approval History, Phase 4 Prompt 10 — see `apps/parent-mobile/docs/approval-history.md`)
 - `POST /api/v1/leave-requests/{leaveRequestId}/approve`
 - `POST /api/v1/leave-requests/{leaveRequestId}/reject`
 

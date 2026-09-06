@@ -11,7 +11,17 @@
       "supportsTablet": false
     },
     "android": {},
-    "plugins": ["expo-router", "expo-secure-store"],
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "DigiHostel uses Face ID to confirm it's you before approving sensitive actions, like a leave decision or removing a trusted device."
+        }
+      ],
+      "expo-notifications"
+    ],
     "experiments": {
       "typedRoutes": true
     }

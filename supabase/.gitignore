@@ -2,6 +2,11 @@
 .branches
 .temp
 
+# Logical backup output (scripts/backup.mjs) — a database dump is exactly the
+# kind of secret-shaped, environment-specific artifact that must never be
+# committed (docs/runbooks/disaster-recovery.md).
+backups/
+
 # dotenvx
 .env.keys
 .env.local

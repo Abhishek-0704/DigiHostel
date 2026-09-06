@@ -32,3 +32,12 @@ export interface NotificationRow {
   status: NotificationRowStatus;
   retryCount: number;
 }
+
+/** F-03 remediation: one row `findStaleClaims()` (the reaper's query)
+ * returns — just enough to re-enqueue a notification job for it
+ * (`NotificationJobPayload`'s shape), nothing more. */
+export interface StaleNotificationClaim {
+  id: string;
+  leaveRequestId: string;
+  stage: DecidableStatus;
+}

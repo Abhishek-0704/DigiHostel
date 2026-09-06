@@ -46,6 +46,32 @@ async function signInAndCountActiveTrustedDevices(email: string): Promise<number
   return data?.length ?? 0;
 }
 
+interface AllDevicesRow {
+  id: string;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+}
+
+async function signInAndListAllTrustedDevices(email: string): Promise<AllDevicesRow[]> {
+  const client = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { error: signInError } = await client.auth.signInWithPassword({
+    email,
+    password: "test-password",
+  });
+  if (signInError) throw signInError;
+
+  // The exact query devices.ts's listTrustedDevices() performs (Prompt 4B —
+  // no revoked_at filter, unlike hasActiveTrustedDevice above).
+  const { data, error } = await client
+    .from("trusted_devices")
+    .select("id, revoked_at, revoked_reason")
+    .order("registered_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as AllDevicesRow[];
+}
+
 describe.skipIf(!RUN)("trusted_devices RLS (real Supabase integration)", () => {
   beforeAll(() => {
     if (!RUN) return;
@@ -73,3 +99,21 @@ describe.skipIf(!RUN)("trusted_devices RLS (real Supabase integration)", () => {
     expect(count).toBe(0);
   });
 });
+
+describe.skipIf(!RUN)(
+  "trusted_devices — full list including revoked (Prompt 4B, real Supabase)",
+  () => {
+    it("a parent whose only device is revoked (parent1-mother) DOES see it via the unfiltered list query — RLS permits reading the caller's own revoked rows, only the app's own hasActiveTrustedDevice query chose to filter them out", async () => {
+      const rows = await signInAndListAllTrustedDevices("parent1-mother@example.test");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].revoked_at).not.toBeNull();
+      expect(rows[0].revoked_reason).toBe("test: device removed by user");
+    });
+
+    it("a parent with one active trusted device (parent1-father) sees it with revoked_at null via the same unfiltered query", async () => {
+      const rows = await signInAndListAllTrustedDevices("parent1-father@example.test");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].revoked_at).toBeNull();
+    });
+  },
+);

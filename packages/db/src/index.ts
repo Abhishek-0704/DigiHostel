@@ -10,7 +10,7 @@ import * as schema from "./schema/index.js";
 // unrelated to this ORM — was added there; only this package's instance
 // (peer-scoped to `postgres` alone, matching the `db` export above) is ever
 // used anywhere in this workspace).
-export { eq, and, or, desc, asc, inArray, isNull, sql } from "drizzle-orm";
+export { eq, and, or, desc, asc, inArray, isNull, isNotNull, lt, sql } from "drizzle-orm";
 
 // Backend-privileged connection (ADR-006) — DATABASE_URL is Supabase's direct
 // Postgres connection string, not the Supabase JS SDK. Any direct client-side
@@ -20,5 +20,16 @@ const connectionString = process.env.DATABASE_URL ?? "";
 const client = postgres(connectionString);
 
 export const db = drizzle(client, { schema });
+
+/**
+ * Closes the underlying postgres-js connection pool. Consuming apps' own
+ * graceful-shutdown sequences (e.g. `apps/api/src/index.ts`'s SIGTERM/SIGINT
+ * handler) call this after stopping Fastify/pg-boss, so no connection is
+ * left open when the process exits (F-06 production-runnable hardening —
+ * `db` itself has no lifecycle hook of its own to piggyback on).
+ */
+export async function closeDb(): Promise<void> {
+  await client.end();
+}
 
 export * from "./schema/index.js";

@@ -1,0 +1,53 @@
+name: Deploy Database Migrations
+
+# F-06 remediation (PRR Phase 13) — the ONE authoritative production
+# migration mechanism (ADR-013: "GitHub Actions for CI/CD"). This
+# deliberately uses a custom GitHub Action rather than Supabase's own
+# dashboard-configured "GitHub Integration" auto-deploy feature, per
+# ADR-013's explicit choice — do not additionally enable Supabase's GitHub
+# Integration for this project, which would create a second, redundant, and
+# potentially conflicting migration-deployment path.
+#
+# Runs automatically whenever a migration file is merged to `main`, or can
+# be triggered manually. Requires SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID
+# and SUPABASE_DB_PASSWORD to be configured as encrypted secrets on the
+# `production` GitHub environment (see docs/runbooks/production-deployment.md
+# §10) — until a production Supabase project exists and those secrets are
+# configured, this workflow's `link` step fails fast and clearly rather than
+# doing anything destructive or partial.
+#
+# Never runs against the local dev stack, and never runs `supabase db reset`
+# (which is destructive) — only the additive `supabase db push`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+  workflow_dispatch: {}
+
+jobs:
+  deploy-migrations:
+    name: Deploy migrations to production Supabase
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      - name: Link to production project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Push migrations (additive only — never a reset)
+        run: supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

@@ -4,6 +4,7 @@ import { FakeAuthDbPort } from "./auth/__fixtures__/fake-db-port.js";
 import { generateTestKeyPair, signTestJwt } from "./auth/__fixtures__/test-jwt.js";
 import { createJwtVerifier } from "./auth/jwt.js";
 import { FakeLeaveRepository } from "../domain/leave/__fixtures__/fake-repository.js";
+import { FakeOtpSender } from "../domain/auth/__fixtures__/fake-otp-sender.js";
 import type { BiometricFreshnessGate } from "./auth/security-gates.js";
 
 /**
@@ -33,6 +34,7 @@ async function buildTestApp() {
   const app = await buildApp({
     authOverrides: { jwtVerifier, authDbPort: authDb },
     leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+    otpAuthOverrides: { otpSender: new FakeOtpSender() },
   });
   const token = await signTestJwt({ sub: "parent-auth", privateKey: pair.privateKey });
   return { app, leaveRepo, token };
@@ -79,6 +81,7 @@ describe("global error handler (G-01)", () => {
     const app = await buildApp({
       authOverrides: { jwtVerifier, authDbPort: authDb },
       leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+      otpAuthOverrides: { otpSender: new FakeOtpSender() },
     });
     const studentToken = await signTestJwt({ sub: "student-auth", privateKey: pair.privateKey });
 

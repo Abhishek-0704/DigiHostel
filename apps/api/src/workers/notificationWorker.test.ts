@@ -91,7 +91,7 @@ describe("processNotificationJob — initial stage-triggered job", () => {
 });
 
 describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60s/120s, exponential, capped at 120s)", () => {
-  it("a rejected first attempt schedules a retry at 30s with expectedRetryCount=1", async () => {
+  it("a rejected first attempt schedules a retry at 30s, targeting this notification's id", async () => {
     const repo = new FakeNotificationRepository()
       .setRecipients("lr-1", "father_notified", [{ recipientId: "parent-1", pushTokens: ["t1"] }])
       .setStudent("lr-1", STUDENT_SUMMARY);
@@ -104,10 +104,16 @@ describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60
       scheduler,
     );
 
+    const notificationId = repo.allRows()[0].id;
     expect(repo.allRows()[0].status).toBe("queued"); // still retryable, not failed yet
     expect(scheduler.enqueuedNotifications).toHaveLength(1);
     expect(scheduler.enqueuedNotifications[0].startAfterMs).toBe(30_000);
-    expect(scheduler.enqueuedNotifications[0].payload.expectedRetryCount).toBe(1);
+    // F-03: the scheduled retry's payload no longer carries a caller-supplied
+    // retry count at all — claimAttempt re-derives eligibility from the
+    // row's own current state, never from this payload (see
+    // NotificationRepository.claimAttempt's doc comment for why).
+    expect(scheduler.enqueuedNotifications[0].payload).not.toHaveProperty("expectedRetryCount");
+    expect(scheduler.enqueuedNotifications[0].payload.notificationId).toBe(notificationId);
   });
 
   it("an 'unknown' provider outcome is treated identically to 'rejected' (ADR-018 §5, Case 3)", async () => {
@@ -146,7 +152,7 @@ describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60
 
     // Attempt 2 (retry 1).
     await processNotificationJob(
-      { leaveRequestId: "lr-1", stage: "father_notified", notificationId, expectedRetryCount: 1 },
+      { leaveRequestId: "lr-1", stage: "father_notified", notificationId },
       repo,
       alwaysReject(),
       scheduler,
@@ -155,7 +161,7 @@ describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60
 
     // Attempt 3 (retry 2).
     await processNotificationJob(
-      { leaveRequestId: "lr-1", stage: "father_notified", notificationId, expectedRetryCount: 2 },
+      { leaveRequestId: "lr-1", stage: "father_notified", notificationId },
       repo,
       alwaysReject(),
       scheduler,
@@ -164,7 +170,7 @@ describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60
 
     // Attempt 4 (retry 3, the last provider attempt allowed) — exhausted.
     await processNotificationJob(
-      { leaveRequestId: "lr-1", stage: "father_notified", notificationId, expectedRetryCount: 3 },
+      { leaveRequestId: "lr-1", stage: "father_notified", notificationId },
       repo,
       alwaysReject(),
       scheduler,
@@ -191,7 +197,7 @@ describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60
     const notificationId = repo.allRows()[0].id;
 
     await processNotificationJob(
-      { leaveRequestId: "lr-1", stage: "father_notified", notificationId, expectedRetryCount: 1 },
+      { leaveRequestId: "lr-1", stage: "father_notified", notificationId },
       repo,
       sender,
       scheduler,
@@ -201,7 +207,7 @@ describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60
     expect(scheduler.enqueuedNotifications).toHaveLength(1); // only the one retry, none after success
   });
 
-  it("a stale/duplicate retry job (expectedRetryCount no longer matches) is a clean no-op", async () => {
+  it("a duplicate/redelivered job for an already-terminal (sent) notification is a clean no-op — never resurrects it", async () => {
     const repo = new FakeNotificationRepository()
       .setRecipients("lr-1", "father_notified", [{ recipientId: "parent-1", pushTokens: ["t1"] }])
       .setStudent("lr-1", STUDENT_SUMMARY);
@@ -215,10 +221,15 @@ describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60
     );
     const notificationId = repo.allRows()[0].id;
 
-    // A duplicate/redelivered retry job for the (already-superseded) attempt 0.
+    // F-03: a duplicate/redelivered job for this same notification — e.g.
+    // pg-boss redelivering the original job, or the reaper mistakenly
+    // targeting an already-terminal row. Unlike the pre-F-03 design, this
+    // no longer depends on any retry-count value the payload happens to
+    // carry — claimAttempt rejects it purely because status is no longer
+    // "queued".
     await expect(
       processNotificationJob(
-        { leaveRequestId: "lr-1", stage: "father_notified", notificationId, expectedRetryCount: 0 },
+        { leaveRequestId: "lr-1", stage: "father_notified", notificationId },
         repo,
         alwaysAccept(),
         scheduler,
@@ -226,5 +237,42 @@ describe("processNotificationJob — retry policy (1 initial + 3 retries, 30s/60
     ).resolves.toBeUndefined();
 
     expect(repo.getRow(notificationId)?.status).toBe("sent"); // unchanged
+    expect(repo.getRow(notificationId)?.retryCount).toBe(1); // not bumped again
+  });
+
+  it("F-03: a notification that already exhausted its retries ('failed') can never be reclaimed", async () => {
+    const repo = new FakeNotificationRepository()
+      .setRecipients("lr-1", "father_notified", [{ recipientId: "parent-1", pushTokens: ["t1"] }])
+      .setStudent("lr-1", STUDENT_SUMMARY);
+    const scheduler = new RecordingJobScheduler();
+
+    await processNotificationJob(
+      { leaveRequestId: "lr-1", stage: "father_notified" },
+      repo,
+      alwaysReject(),
+      scheduler,
+    );
+    const notificationId = repo.allRows()[0].id;
+    for (let i = 0; i < 3; i++) {
+      await processNotificationJob(
+        { leaveRequestId: "lr-1", stage: "father_notified", notificationId },
+        repo,
+        alwaysReject(),
+        scheduler,
+      );
+    }
+    expect(repo.getRow(notificationId)?.status).toBe("failed");
+    const retryCountAtExhaustion = repo.getRow(notificationId)?.retryCount;
+
+    // A stray redelivery/reap attempt after exhaustion — must stay 'failed'.
+    await processNotificationJob(
+      { leaveRequestId: "lr-1", stage: "father_notified", notificationId },
+      repo,
+      alwaysAccept(), // even if the provider would now accept it
+      scheduler,
+    );
+
+    expect(repo.getRow(notificationId)?.status).toBe("failed"); // never resurrected
+    expect(repo.getRow(notificationId)?.retryCount).toBe(retryCountAtExhaustion); // untouched
   });
 });

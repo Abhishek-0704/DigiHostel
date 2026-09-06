@@ -1,0 +1,13 @@
+-- Enables Supabase Realtime (ADR-009, Postgres Changes) for leave_requests
+-- and notifications. RLS (already enabled and policy-covered on both tables
+-- — see packages/db/src/schema/{leave,notification}.ts) continues to scope
+-- exactly which rows each authenticated client's subscription receives; this
+-- statement only makes the tables eligible for logical replication in the
+-- first place. No RLS policy is added or changed here.
+--
+-- Not a Drizzle-tracked schema change (no pgTable/enum/index is affected),
+-- so this migration is hand-written rather than drizzle-kit-generated —
+-- Supabase's own migration runner applies every *.sql file in this
+-- directory by filename order regardless of drizzle-kit's separate
+-- meta/_journal.json bookkeeping.
+alter publication supabase_realtime add table leave_requests, notifications;

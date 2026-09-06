@@ -33,7 +33,7 @@ export interface DeriveAuthStatusInput {
   configError: boolean;
   /** The current raw Supabase session, or null. */
   hasSession: boolean;
-  /** True while an explicit sendOtp/verifyOtp call is in flight. */
+  /** True while an explicit requestOtp/verifyOtp call is in flight. */
   isAuthenticating: boolean;
   /** Result of the (device-trust) check performed once a session exists. */
   deviceCheck: DeviceCheckStatus;

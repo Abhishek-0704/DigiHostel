@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+**/dist
+**/.expo
+# TypeScript's incremental-build bookkeeping — if copied stale from the host
+# (this repo's own dev environment builds these constantly), tsc's
+# incremental check compares only source file state, not whether the dist/
+# it references still exists, and silently skips emitting entirely,
+# producing a "successful" build with no output (found the hard way while
+# verifying this Dockerfile — F-06).
+**/tsconfig.tsbuildinfo
+.git
+.github
+sdd
+docs
+supabase/backups
+*.log

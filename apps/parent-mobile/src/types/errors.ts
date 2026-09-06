@@ -17,9 +17,6 @@ export type AppErrorKind =
   | "validation"
   | "unknown"
   // Auth/device kinds (Prompt 3):
-  | "invalid_phone_number"
-  | "otp_send_failed"
-  | "otp_expired"
   | "otp_invalid"
   | "otp_rate_limited"
   | "auth_provider_unavailable"
@@ -27,7 +24,24 @@ export type AppErrorKind =
   | "session_refresh_failed"
   | "device_not_trusted"
   | "device_revoked"
-  | "device_registration_unavailable";
+  | "device_registration_unavailable"
+  | "device_removal_unavailable"
+  // Notification kinds (Prompt 8):
+  | "notification_unavailable"
+  | "notification_action_unavailable"
+  | "realtime_unavailable"
+  // Leave approval kinds (Prompt 9A):
+  | "leave_approval_unavailable"
+  // Leave approval kinds (Prompt 9B): the backend's biometric-freshness
+  // gate (currently AssertionPresenceBiometricFreshnessGate, an explicitly
+  // non-cryptographic placeholder — apps/api/src/lib/auth/security-gates.ts)
+  // rejected the submitted assertion. Distinct from the generic "forbidden"
+  // because the correct next step differs (re-attempt biometric step-up,
+  // not "you lack permission").
+  | "biometric_verification_failed"
+  // Profile kinds (Prompt 11):
+  | "profile_unavailable"
+  | "profile_update_failed";
 
 export class AppError extends Error {
   constructor(
@@ -51,10 +65,7 @@ const SAFE_MESSAGES: Record<AppErrorKind, string> = {
   conflict: "This action can no longer be completed — the item may have already changed.",
   validation: "Please check the information you entered and try again.",
   unknown: "Something went wrong. Please try again.",
-  invalid_phone_number: "Please enter a valid mobile number.",
-  otp_send_failed: "We couldn't send a verification code. Please try again.",
-  otp_expired: "That code has expired. Please request a new one.",
-  otp_invalid: "That code isn't correct. Please check and try again.",
+  otp_invalid: "That code isn't correct or has expired. Please check and try again.",
   otp_rate_limited: "Too many attempts. Please wait a moment before trying again.",
   auth_provider_unavailable: "Sign-in is temporarily unavailable. Please try again shortly.",
   session_restore_failed: "We couldn't restore your session. Please sign in again.",
@@ -63,6 +74,15 @@ const SAFE_MESSAGES: Record<AppErrorKind, string> = {
   device_revoked: "This device's access has been revoked.",
   device_registration_unavailable:
     "Device verification isn't available yet. Please try again later.",
+  device_removal_unavailable: "Removing this device isn't available yet. Please try again later.",
+  notification_unavailable: "We couldn't load your notifications. Please try again.",
+  notification_action_unavailable: "This action isn't available yet. Please check back later.",
+  realtime_unavailable: "Live updates are unavailable right now. Pull to refresh instead.",
+  leave_approval_unavailable:
+    "Leave approval isn't available in this version of the app yet. Please check back soon.",
+  biometric_verification_failed: "We couldn't verify you securely. Please try again.",
+  profile_unavailable: "We couldn't load your profile. Please try again.",
+  profile_update_failed: "We couldn't save your changes. Please try again.",
 };
 
 /** Maps an arbitrary caught value (a thrown fetch error, a generated

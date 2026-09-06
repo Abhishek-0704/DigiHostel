@@ -89,3 +89,29 @@ export interface CreateLeaveRequestInput {
   startDate: string;
   endDate: string;
 }
+
+/** `leave_approval_events.event_type` (packages/db/src/schema/enums.ts,
+ * `approval_event_type`) — the complete, real vocabulary. No other event
+ * type exists; nothing beyond this list may ever be surfaced (ADR-015). */
+export type ApprovalEventType =
+  "notified" | "responded" | "escalated" | "expired" | "manual_override";
+
+/** `leave_approval_events.response` — nullable; only populated on
+ * `responded` rows. */
+export type ApprovalEventResponse = "approved" | "rejected" | "no_response";
+
+/**
+ * API view of one immutable `leave_approval_events` row (Approval History,
+ * Phase 4 Prompt 10). Deliberately omits `actor_parent_id`/`actor_staff_id`:
+ * this app must never let a parent learn which specific parent/guardian/staff
+ * member acted on a request (escalation-relationship privacy — same
+ * principle already applied to the Leave Approval timeline). Every field
+ * here is a fact about the EVENT, never about the ACTOR.
+ */
+export interface LeaveApprovalEventView {
+  id: string;
+  eventType: ApprovalEventType;
+  response: ApprovalEventResponse | null;
+  biometricConfirmed: boolean;
+  occurredAt: string;
+}

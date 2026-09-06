@@ -5,6 +5,7 @@ import {
   type CreateLeaveRequestInput,
   type DecidableStatus,
   type DecideLeaveRequestInput,
+  type LeaveApprovalEventView,
   type LeaveRequestView,
   type MarkExpiredInput,
 } from "../types.js";
@@ -29,9 +30,21 @@ export class FakeLeaveRepository implements LeaveRepository {
    * hostel; a student's hostel is looked up via `studentHostels`. */
   staffHostels = new Map<string, string>(); // staffId -> hostelId
   studentHostels = new Map<string, string>(); // studentId -> hostelId
+  /** Approval History (Phase 4 Prompt 10) — mirrors the real repository's
+   * leave_approval_events rows in-memory, keyed by leaveRequestId. Populated
+   * automatically by decide()/markExpired() (same events the real repository
+   * writes) and directly seedable via addApprovalEvent() for tests that need
+   * a richer/older timeline than a single fake decision produces. */
+  approvalEvents = new Map<string, LeaveApprovalEventView[]>();
 
   addLeaveRequest(view: LeaveRequestView) {
     this.leaveRequests.set(view.id, view);
+    return this;
+  }
+  addApprovalEvent(leaveRequestId: string, event: LeaveApprovalEventView) {
+    const existing = this.approvalEvents.get(leaveRequestId) ?? [];
+    existing.push(event);
+    this.approvalEvents.set(leaveRequestId, existing);
     return this;
   }
   linkParentToStudent(parentId: string, studentId: string) {
@@ -72,6 +85,13 @@ export class FakeLeaveRepository implements LeaveRepository {
     };
     this.leaveRequests.set(input.leaveRequestId, updated);
     this.events.push(input);
+    this.addApprovalEvent(input.leaveRequestId, {
+      id: crypto.randomUUID(),
+      eventType: "responded",
+      response: input.decision,
+      biometricConfirmed: true,
+      occurredAt: updated.updatedAt,
+    });
     return { kind: "success", leaveRequest: updated };
   }
 
@@ -161,6 +181,19 @@ export class FakeLeaveRepository implements LeaveRepository {
       updatedAt: new Date().toISOString(),
     };
     this.leaveRequests.set(input.leaveRequestId, updated);
+    this.addApprovalEvent(input.leaveRequestId, {
+      id: crypto.randomUUID(),
+      eventType: "expired",
+      response: null,
+      biometricConfirmed: false,
+      occurredAt: updated.updatedAt,
+    });
     return { kind: "success", leaveRequest: updated };
+  }
+
+  async listEventsForLeaveRequest(leaveRequestId: string): Promise<LeaveApprovalEventView[]> {
+    return [...(this.approvalEvents.get(leaveRequestId) ?? [])].sort((a, b) =>
+      a.occurredAt.localeCompare(b.occurredAt),
+    );
   }
 }

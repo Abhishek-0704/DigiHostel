@@ -5,6 +5,8 @@ import {
   RATE_LIMIT_DECISION,
   RATE_LIMIT_CREATE,
   RATE_LIMIT_EXPIRE,
+  RATE_LIMIT_OTP_REQUEST,
+  RATE_LIMIT_OTP_VERIFY,
   type RateLimitTier,
 } from "../config/rateLimit.js";
 
@@ -13,6 +15,8 @@ export interface RateLimitTiers {
   decision: RateLimitTier;
   create: RateLimitTier;
   expire: RateLimitTier;
+  otpRequest: RateLimitTier;
+  otpVerify: RateLimitTier;
 }
 
 export interface RegisterRateLimitOverrides {
@@ -60,6 +64,8 @@ export async function registerRateLimit(
     decision: overrides.tiers?.decision ?? RATE_LIMIT_DECISION,
     create: overrides.tiers?.create ?? RATE_LIMIT_CREATE,
     expire: overrides.tiers?.expire ?? RATE_LIMIT_EXPIRE,
+    otpRequest: overrides.tiers?.otpRequest ?? RATE_LIMIT_OTP_REQUEST,
+    otpVerify: overrides.tiers?.otpVerify ?? RATE_LIMIT_OTP_VERIFY,
   };
 
   await app.register(rateLimit, {

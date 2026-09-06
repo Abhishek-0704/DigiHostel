@@ -1,38 +1,33 @@
 import { describe, it, expect } from "vitest";
 import {
-  validateLocalPhoneNumber,
+  isValidRollNumber,
   sanitizeOtpInput,
   isCompleteOtp,
-  COUNTRY_CODE,
-  LOCAL_NUMBER_LENGTH,
+  RELATIONSHIP_OPTIONS,
   OTP_LENGTH,
 } from "./validation";
 
-describe("validateLocalPhoneNumber", () => {
-  it("rejects a number shorter than the required local length", () => {
-    const result = validateLocalPhoneNumber("900000");
-    expect(result.valid).toBe(false);
-    if (!result.valid) {
-      expect(result.message).toContain(`${LOCAL_NUMBER_LENGTH}-digit`);
-    }
+describe("isValidRollNumber", () => {
+  it("rejects an empty string", () => {
+    expect(isValidRollNumber("")).toBe(false);
   });
 
-  it("rejects a number longer than the required local length", () => {
-    const result = validateLocalPhoneNumber("9".repeat(LOCAL_NUMBER_LENGTH + 1));
-    expect(result.valid).toBe(false);
+  it("rejects a whitespace-only value", () => {
+    expect(isValidRollNumber("   ")).toBe(false);
   });
 
-  it("accepts a well-formed local number and composes it with the fixed country code", () => {
-    const local = "9000000001";
-    expect(local).toHaveLength(LOCAL_NUMBER_LENGTH);
-    const result = validateLocalPhoneNumber(local);
-    expect(result).toEqual({ valid: true, fullNumber: `${COUNTRY_CODE}${local}` });
+  it("accepts a well-formed roll number", () => {
+    expect(isValidRollNumber("21CS0123")).toBe(true);
   });
 
-  it("never claims a number belongs to a real registered parent — purely format validation, no such field exists on the result", () => {
-    const result = validateLocalPhoneNumber("9000000001");
-    expect(result).not.toHaveProperty("isRegisteredParent");
-    expect(result).not.toHaveProperty("belongsToParent");
+  it("never claims a roll number belongs to a real registered student — purely format validation", () => {
+    expect(typeof isValidRollNumber("21CS0123")).toBe("boolean");
+  });
+});
+
+describe("RELATIONSHIP_OPTIONS", () => {
+  it("offers exactly father, mother, guardian — matching the backend's enum", () => {
+    expect(RELATIONSHIP_OPTIONS.map((o) => o.value)).toEqual(["father", "mother", "guardian"]);
   });
 });
 

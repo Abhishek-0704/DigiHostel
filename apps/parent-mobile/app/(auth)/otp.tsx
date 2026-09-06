@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import type { ParentRelationshipType } from "@digihostel/api-client-react";
 import { PageContainer } from "@/src/components/layout/PageContainer";
 import { PageHeader } from "@/src/components/layout/PageHeader";
 import { OTPInput } from "@/src/components/ui/OTPInput";
 import { Button } from "@/src/components/ui/Button";
 import { useAuth } from "@/src/hooks/useAuth";
 import { useTheme } from "@/src/hooks/useTheme";
-import { maskPhoneNumber } from "@/src/utils/phone";
 import { toAppError, type AppError } from "@/src/types/errors";
 import { OTP_LENGTH, isCompleteOtp } from "@/src/features/authentication/validation";
 
@@ -24,27 +24,40 @@ import { OTP_LENGTH, isCompleteOtp } from "@/src/features/authentication/validat
 const RESEND_COOLDOWN_SECONDS = 30;
 
 /**
- * OTP verification screen (Prompt 4A). Consumes `useAuth().verifyOtp`
- * (Prompt 3) exclusively — no Supabase call happens directly here. On
- * success, this screen does NOT navigate itself: AuthContext's own
- * device-check effect and AuthGate's redirect (src/navigation/AuthGate.tsx)
- * take over automatically once the real session exists, exactly like
- * (auth)'s own internal welcome -> login -> otp navigation is handled by
- * this screen while everything past OTP is handled by the existing
- * infrastructure.
+ * OTP verification screen (F-02 remediation, PRR Phase 13). Consumes
+ * `useAuth().verifyOtp`/`requestOtp` exclusively — no Supabase call happens
+ * directly here. This screen never receives, holds, or displays a phone
+ * number: it carries an opaque `challengeId` (issued by the backend's
+ * eligibility gate) plus the `rollNumber`/`relationshipType` the user
+ * entered on Login, needed only so "resend" can re-request a fresh
+ * challenge — never to construct or display a phone number. On success,
+ * this screen does NOT navigate itself: AuthContext's own device-check
+ * effect and AuthGate's redirect (src/navigation/AuthGate.tsx) take over
+ * automatically once the real session exists.
  */
 export default function Otp() {
   const router = useRouter();
   const { theme } = useTheme();
-  const { phone } = useLocalSearchParams<{ phone?: string }>();
-  const { verifyOtp, sendOtp } = useAuth();
+  const {
+    challengeId: initialChallengeId,
+    rollNumber,
+    relationshipType,
+  } = useLocalSearchParams<{
+    challengeId?: string;
+    rollNumber?: string;
+    relationshipType?: ParentRelationshipType;
+  }>();
+  const { verifyOtp, requestOtp } = useAuth();
 
+  const [challengeId, setChallengeId] = useState(initialChallengeId);
   const [code, setCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [verifyError, setVerifyError] = useState<AppError | null>(null);
   const [verified, setVerified] = useState(false);
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
+
+  const canResend = Boolean(rollNumber && relationshipType);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -53,20 +66,20 @@ export default function Otp() {
   }, [cooldown]);
 
   useEffect(() => {
-    // No phone param means this screen was reached without going through
-    // Login (e.g. a stale deep link) — there is nothing to verify against,
-    // so send the user back rather than showing a broken form.
-    if (!phone) {
+    // No challengeId param means this screen was reached without going
+    // through Login (e.g. a stale deep link) — there is nothing to verify
+    // against, so send the user back rather than showing a broken form.
+    if (!initialChallengeId) {
       router.replace("/(auth)/login");
     }
-  }, [phone, router]);
+  }, [initialChallengeId, router]);
 
   const handleVerify = async (submittedCode: string) => {
-    if (!phone || !isCompleteOtp(submittedCode) || isVerifying) return;
+    if (!challengeId || !isCompleteOtp(submittedCode) || isVerifying) return;
     setIsVerifying(true);
     setVerifyError(null);
     try {
-      await verifyOtp(phone, submittedCode);
+      await verifyOtp(challengeId, submittedCode);
       setVerified(true);
     } catch (err) {
       setVerifyError(toAppError(err));
@@ -77,11 +90,12 @@ export default function Otp() {
   };
 
   const handleResend = async () => {
-    if (!phone || cooldown > 0 || isResending) return;
+    if (!rollNumber || !relationshipType || cooldown > 0 || isResending) return;
     setIsResending(true);
     setVerifyError(null);
     try {
-      await sendOtp(phone);
+      const { challengeId: newChallengeId } = await requestOtp(rollNumber, relationshipType);
+      setChallengeId(newChallengeId);
       setCooldown(RESEND_COOLDOWN_SECONDS);
       setCode("");
     } catch (err) {
@@ -91,11 +105,14 @@ export default function Otp() {
     }
   };
 
-  if (!phone) return null; // brief frame before the redirect effect above fires
+  if (!initialChallengeId) return null; // brief frame before the redirect effect above fires
 
   return (
     <PageContainer>
-      <PageHeader title="Enter verification code" subtitle={`Sent to ${maskPhoneNumber(phone)}`} />
+      <PageHeader
+        title="Enter verification code"
+        subtitle="We've sent a one-time code to the registered mobile number, if one is on file."
+      />
 
       {verified ? (
         <View accessibilityLiveRegion="polite" style={styles.successRow}>
@@ -128,24 +145,26 @@ export default function Otp() {
             />
           </View>
 
-          <View style={styles.resendRow}>
-            {cooldown > 0 ? (
-              <Text
-                style={[typographySmall, { color: theme.colors.textSecondary }]}
-                accessibilityLiveRegion="polite"
-              >
-                {`Resend code in 0:${cooldown.toString().padStart(2, "0")}`}
-              </Text>
-            ) : (
-              <Button
-                label={isResending ? "Sending…" : "Resend code"}
-                variant="ghost"
-                loading={isResending}
-                onPress={handleResend}
-                accessibilityHint="Sends a new verification code to your mobile number"
-              />
-            )}
-          </View>
+          {canResend ? (
+            <View style={styles.resendRow}>
+              {cooldown > 0 ? (
+                <Text
+                  style={[typographySmall, { color: theme.colors.textSecondary }]}
+                  accessibilityLiveRegion="polite"
+                >
+                  {`Resend code in 0:${cooldown.toString().padStart(2, "0")}`}
+                </Text>
+              ) : (
+                <Button
+                  label={isResending ? "Sending…" : "Resend code"}
+                  variant="ghost"
+                  loading={isResending}
+                  onPress={handleResend}
+                  accessibilityHint="Sends a new verification code to the registered mobile number"
+                />
+              )}
+            </View>
+          ) : null}
         </>
       )}
     </PageContainer>

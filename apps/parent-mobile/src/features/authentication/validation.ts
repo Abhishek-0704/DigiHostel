@@ -1,34 +1,31 @@
-import { isValidPhoneNumber } from "../../utils/phone";
+import { ParentRelationshipType } from "@digihostel/api-client-react";
 
 /**
- * Login/OTP presentation-layer validation (Prompt 4A) — pure, no React
- * Native import, independently unit-tested. Reuses Prompt 3's existing
- * `isValidPhoneNumber` (src/utils/phone.ts) rather than inventing a second
- * phone-format algorithm; this module only adds the UI-specific composition
- * (fixed country code + local-number-length check) around it.
+ * Login/OTP presentation-layer validation. Pure, no React Native import,
+ * independently unit-tested.
  *
- * Never determines whether a number belongs to a real/registered parent —
- * that is not something the client can or should decide (see
- * docs/authentication.md's security-boundary note). This is format
- * validation only.
+ * F-02 remediation (PRR Phase 13): login no longer collects a phone number
+ * at all — the client submits a roll number + relationship, and the backend
+ * resolves the authoritative phone server-side (never returned to this
+ * app). `isValidRollNumber` is deliberately format-only (matches the
+ * backend's own anti-enumeration design): it never determines whether a
+ * roll number belongs to a real, registered student — that is not something
+ * the client can or should decide.
  */
 
-export const COUNTRY_CODE = "+91";
-export const LOCAL_NUMBER_LENGTH = 10;
 export const OTP_LENGTH = 6;
 
-export type PhoneValidationResult =
-  { valid: true; fullNumber: string } | { valid: false; message: string };
+export const RELATIONSHIP_OPTIONS: ReadonlyArray<{
+  value: ParentRelationshipType;
+  label: string;
+}> = [
+  { value: ParentRelationshipType.father, label: "Father" },
+  { value: ParentRelationshipType.mother, label: "Mother" },
+  { value: ParentRelationshipType.guardian, label: "Guardian" },
+];
 
-export function validateLocalPhoneNumber(localNumber: string): PhoneValidationResult {
-  if (localNumber.length !== LOCAL_NUMBER_LENGTH) {
-    return { valid: false, message: `Enter your ${LOCAL_NUMBER_LENGTH}-digit mobile number.` };
-  }
-  const fullNumber = `${COUNTRY_CODE}${localNumber}`;
-  if (!isValidPhoneNumber(fullNumber)) {
-    return { valid: false, message: "Please enter a valid mobile number." };
-  }
-  return { valid: true, fullNumber };
+export function isValidRollNumber(value: string): boolean {
+  return value.trim().length > 0;
 }
 
 /** Strips non-digit characters and caps at `OTP_LENGTH` — the same

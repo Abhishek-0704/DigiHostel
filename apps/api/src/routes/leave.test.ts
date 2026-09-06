@@ -5,6 +5,7 @@ import { FakeAuthDbPort } from "../lib/auth/__fixtures__/fake-db-port.js";
 import { generateTestKeyPair, signTestJwt } from "../lib/auth/__fixtures__/test-jwt.js";
 import { createJwtVerifier } from "../lib/auth/jwt.js";
 import { FakeLeaveRepository } from "../domain/leave/__fixtures__/fake-repository.js";
+import { FakeOtpSender } from "../domain/auth/__fixtures__/fake-otp-sender.js";
 import type { LeaveRequestStatus, LeaveRequestView } from "../domain/leave/types.js";
 import type { BiometricFreshnessGate } from "../lib/auth/security-gates.js";
 
@@ -37,9 +38,25 @@ function makeLeaveRequest(id: string, status: LeaveRequestStatus): LeaveRequestV
 const freshGate: BiometricFreshnessGate = {
   checkFreshness: async () => ({ fresh: true, confirmedAt: new Date() }),
 };
+// Matches LeaveService.decide()'s real action-binding check
+// (`leave-decision:${leaveRequestId}`) against the fixed fixture id every
+// approve/reject test below targets — see LEAVE_REQUEST_ID usage throughout
+// `buildTestApp()`.
 const validBody = {
-  biometricAssertion: { assertionToken: "tok", actionId: "leave-decision:lr-1" },
+  biometricAssertion: {
+    assertionToken: "tok",
+    actionId: "leave-decision:11111111-1111-1111-1111-111111111111",
+  },
 };
+
+/** For the handful of tests that decide a leave request created dynamically
+ * within the test itself (id unknown ahead of time) rather than the fixed
+ * fixture id `validBody` targets. */
+function biometricBodyFor(leaveRequestId: string) {
+  return {
+    biometricAssertion: { assertionToken: "tok", actionId: `leave-decision:${leaveRequestId}` },
+  };
+}
 
 describe("leave routes (end-to-end through the real app)", () => {
   let privateKey: KeyLike;
@@ -75,6 +92,7 @@ describe("leave routes (end-to-end through the real app)", () => {
     const app = await buildApp({
       authOverrides: { jwtVerifier, authDbPort: authDb },
       leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+      otpAuthOverrides: { otpSender: new FakeOtpSender() },
     });
     return { app, leaveRepo };
   }
@@ -232,6 +250,7 @@ describe("leave routes (end-to-end through the real app)", () => {
       const app = await buildApp({
         authOverrides: { jwtVerifier, authDbPort: authDb },
         leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+        otpAuthOverrides: { otpSender: new FakeOtpSender() },
       });
       const token = await signTestJwt({ sub: "other-staff-auth", privateKey });
 
@@ -483,6 +502,152 @@ describe("leave routes (end-to-end through the real app)", () => {
     startDate: "2026-11-01",
     endDate: "2026-11-03",
   };
+
+  describe("GET /leave-requests/:leaveRequestId/events (Approval History, Phase 4 Prompt 10)", () => {
+    const LEAVE_ID = "11111111-1111-1111-1111-111111111111";
+
+    it("unauthenticated: GET without a token -> 401", async () => {
+      const { app } = await buildTestApp();
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/events`,
+      });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it("owning student: allowed, returns seeded events oldest-first", async () => {
+      const { app, leaveRepo } = await buildTestApp();
+      leaveRepo
+        .addApprovalEvent(LEAVE_ID, {
+          id: "22222222-2222-2222-2222-222222222222",
+          eventType: "notified",
+          response: null,
+          biometricConfirmed: false,
+          occurredAt: "2026-10-02T00:00:00.000Z",
+        })
+        .addApprovalEvent(LEAVE_ID, {
+          id: "33333333-3333-3333-3333-333333333333",
+          eventType: "responded",
+          response: "approved",
+          biometricConfirmed: true,
+          occurredAt: "2026-10-01T00:00:00.000Z",
+        });
+
+      const token = await tokenFor(STUDENT_AUTH);
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/events`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toHaveLength(2);
+      // Oldest first, by occurredAt — not insertion order.
+      expect(body[0].id).toBe("33333333-3333-3333-3333-333333333333");
+      expect(body[1].id).toBe("22222222-2222-2222-2222-222222222222");
+      await app.close();
+    });
+
+    it("response shape never includes actor identity fields", async () => {
+      const { app, leaveRepo } = await buildTestApp();
+      leaveRepo.addApprovalEvent(LEAVE_ID, {
+        id: "22222222-2222-2222-2222-222222222222",
+        eventType: "responded",
+        response: "approved",
+        biometricConfirmed: true,
+        occurredAt: new Date().toISOString(),
+      });
+      const token = await tokenFor(PARENT_A_AUTH);
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/events`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const [event] = res.json();
+      expect(Object.keys(event).sort()).toEqual(
+        ["biometricConfirmed", "eventType", "id", "occurredAt", "response"].sort(),
+      );
+      expect(event).not.toHaveProperty("actorParentId");
+      expect(event).not.toHaveProperty("actorStaffId");
+      await app.close();
+    });
+
+    it("a different student (not the owner): denied (404, anti-enumeration)", async () => {
+      const { app } = await buildTestApp();
+      const token = await tokenFor(STUDENT_2_AUTH);
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/events`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it("staff (neither student nor parent): denied (403)", async () => {
+      const { app } = await buildTestApp();
+      const token = await tokenFor(STAFF_AUTH);
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/events`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+
+    it("related parent: allowed", async () => {
+      const { app } = await buildTestApp();
+      const token = await tokenFor(PARENT_A_AUTH);
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/events`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual([]);
+      await app.close();
+    });
+
+    it("unrelated parent: denied (404, anti-enumeration)", async () => {
+      const { app } = await buildTestApp();
+      const token = await tokenFor(PARENT_B_AUTH);
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/events`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it("a real decide() call produces a queryable event via this route", async () => {
+      const { app } = await buildTestApp("pending");
+      const token = await tokenFor(PARENT_A_AUTH);
+      const approveRes = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/approve`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: validBody,
+      });
+      expect(approveRes.statusCode).toBe(200);
+
+      const eventsRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/leave-requests/${LEAVE_ID}/events`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(eventsRes.statusCode).toBe(200);
+      const events = eventsRes.json();
+      expect(events).toHaveLength(1);
+      expect(events[0].eventType).toBe("responded");
+      expect(events[0].response).toBe("approved");
+      expect(events[0].biometricConfirmed).toBe(true);
+      await app.close();
+    });
+  });
 
   describe("POST /leave-requests — student creation", () => {
     it("unauthenticated -> 401", async () => {
@@ -759,7 +924,7 @@ describe("leave routes (end-to-end through the real app)", () => {
         method: "POST",
         url: `/api/v1/leave-requests/${created.id}/approve`,
         headers: { authorization: `Bearer ${parentToken}` },
-        payload: validBody,
+        payload: biometricBodyFor(created.id),
       });
       expect(approveRes.statusCode).toBe(200);
       expect(approveRes.json().status).toBe("approved");
@@ -839,6 +1004,7 @@ describe("leave routes (end-to-end through the real app)", () => {
       const app = await buildApp({
         authOverrides: { jwtVerifier, authDbPort: authDb },
         leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+        otpAuthOverrides: { otpSender: new FakeOtpSender() },
       });
       return { app };
     }
@@ -896,6 +1062,7 @@ describe("leave routes (end-to-end through the real app)", () => {
       const app = await buildApp({
         authOverrides: { jwtVerifier, authDbPort: authDb },
         leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
+        otpAuthOverrides: { otpSender: new FakeOtpSender() },
       });
       const token = await tokenFor("library-auth");
       const res = await app.inject({

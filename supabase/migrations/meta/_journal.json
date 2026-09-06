@@ -15,6 +15,20 @@
       "when": 1788383564510,
       "tag": "0001_nasty_thunderbolt_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788606860508,
+      "tag": "0003_f01_trusted_devices_rls_remediation",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788618868947,
+      "tag": "0004_f03_notification_claim_lease",
+      "breakpoints": true
     }
   ]
 }
