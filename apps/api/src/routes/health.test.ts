@@ -26,11 +26,42 @@ describe("GET /api/v1/healthz", () => {
     const response = await app.inject({ method: "GET", url: "/api/v1/healthz" });
 
     expect(response.statusCode).toBe(200);
-    // No BUILD_SHA set in this test environment -> "unknown", proving the
-    // field is always present rather than silently omitted.
+    // Neither RENDER_GIT_COMMIT nor BUILD_SHA is set in this test
+    // environment -> "unknown", proving the field is always present rather
+    // than silently omitted.
     expect(response.json()).toEqual({ status: "ok", version: "unknown" });
 
     await app.close();
+  });
+
+  it("prefers RENDER_GIT_COMMIT over BUILD_SHA when both are set (F-07E)", async () => {
+    const original = { render: process.env.RENDER_GIT_COMMIT, build: process.env.BUILD_SHA };
+    process.env.RENDER_GIT_COMMIT = "render-injected-sha";
+    process.env.BUILD_SHA = "stale-fallback-sha";
+    try {
+      const app = await buildTestApp();
+      const response = await app.inject({ method: "GET", url: "/api/v1/healthz" });
+      expect(response.json()).toEqual({ status: "ok", version: "render-injected-sha" });
+      await app.close();
+    } finally {
+      process.env.RENDER_GIT_COMMIT = original.render;
+      process.env.BUILD_SHA = original.build;
+    }
+  });
+
+  it("falls back to BUILD_SHA when RENDER_GIT_COMMIT is absent (local dev/non-Render hosts)", async () => {
+    const original = { render: process.env.RENDER_GIT_COMMIT, build: process.env.BUILD_SHA };
+    delete process.env.RENDER_GIT_COMMIT;
+    process.env.BUILD_SHA = "local-build-sha";
+    try {
+      const app = await buildTestApp();
+      const response = await app.inject({ method: "GET", url: "/api/v1/healthz" });
+      expect(response.json()).toEqual({ status: "ok", version: "local-build-sha" });
+      await app.close();
+    } finally {
+      process.env.RENDER_GIT_COMMIT = original.render;
+      process.env.BUILD_SHA = original.build;
+    }
   });
 
   it("carries an x-request-id response header on every response, including 2xx (F-07)", async () => {

@@ -180,8 +180,9 @@ delivery-exhaustion are both now visible per notification.
 ## 6. Health and readiness
 
 - **`/healthz`**: liveness only — never touches Postgres, returns
-  `{status: "ok", version: BUILD_SHA}`. Unchanged by this task (already
-  correct per F-06). Rate-limit exempt.
+  `{status: "ok", version: ...}`. Rate-limit exempt. **`version`'s source
+  corrected by F-07E** — see §11 below; this section's semantics are
+  otherwise unchanged since F-06.
 - **`/readyz`**: checks Postgres only (`select 1`) — the one dependency
   every route and every pg-boss worker actually shares. Unchanged
   semantics; **added**: a `request.log.warn({ err }, "readyz: dependency
@@ -388,3 +389,44 @@ live-verified on Render staging.** The section below reflects that; see
   instruction); F-07B's task explicitly authorized, and performed, exactly
   one deployment push plus one necessary CI-config fix discovered in the
   process — both recorded in `docs/current-state.md`.
+
+## 11. Build provenance (F-07E)
+
+**Defect, confirmed and fixed 2026-09-07.** `/healthz`'s `version` field
+previously read only `process.env.BUILD_SHA`, a plain env var the live
+staging service (`digihostel-api-staging`) had set to a **static string**
+(`856d81eb3b143f79e4dbbedfb44841a3c4997037`) once, manually, during
+F-06-STAGING's provisioning — nothing in this repository's deploy path
+(the `deploy-api` GitHub Actions job only POSTs to a Render deploy hook
+URL) ever updates it. Confirmed via direct Render API evidence (F-07D):
+Render's own deploy history showed the actual live deploy was a different,
+later commit than what `/healthz` reported — the field was provably
+stale, not merely suspected to be.
+
+`render.yaml`'s own `fromService: RENDER_GIT_COMMIT` binding for
+`BUILD_SHA` was never in effect either, because the real service was
+provisioned manually rather than by applying that Blueprint (a Blueprint
+sync onto the existing, differently-named service was evaluated and
+rejected as unsafe/uncertain — Render Blueprints match services by name,
+and `render.yaml`'s service is named `digihostel-api`, not
+`digihostel-api-staging`, so a sync risked creating a second, duplicate
+service rather than adopting the existing one).
+
+**Fix**: `apps/api/src/routes/health.ts` now reads
+`process.env.RENDER_GIT_COMMIT` first — a variable Render injects
+automatically into every running container, with no `envVars`
+configuration required at all — falling back to the existing `BUILD_SHA`
+env var only for non-Render hosts (local dev). This needed no GitHub
+secret, no Render API call, no pipeline change, and no Blueprint
+adoption: `RENDER_GIT_COMMIT` is correct and current on every deploy by
+construction, eliminating the manually-maintained value entirely rather
+than adding a mechanism to keep it in sync. `render.yaml`'s now-redundant
+`BUILD_SHA`/`fromService` entry was removed for the same reason (avoiding
+a second, competing declared source of truth in the template, even though
+that template was never actually applied to the live service).
+
+Live-verified (E1, direct Render API + `/healthz` comparison) — see the
+F-07E task's own final report for the exact deploy SHA / `/healthz.version`
+equality evidence at the time of the fix. The live service's now-unused,
+stale `BUILD_SHA` env var was left in place (harmless — no longer read
+with priority) rather than deleted, to keep this fix minimal.

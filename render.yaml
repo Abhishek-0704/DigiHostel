@@ -30,15 +30,19 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Render exposes its own git commit SHA as RENDER_GIT_COMMIT
-      # automatically; mapped here so BUILD_SHA (read by apps/api/src/index.ts
-      # and returned by /healthz) reflects the real deployed commit without
-      # this file needing to know it in advance.
-      - key: BUILD_SHA
-        fromService:
-          type: web
-          name: digihostel-api
-          envVarKey: RENDER_GIT_COMMIT
+      # F-07E correction: no BUILD_SHA entry is declared here at all.
+      # Render injects RENDER_GIT_COMMIT into every running container
+      # automatically, with no envVars configuration required — the
+      # `fromService: RENDER_GIT_COMMIT` binding this file previously
+      # declared for a self-referencing BUILD_SHA was solving a problem
+      # Render had already solved natively, and — critically — it was never
+      # actually in effect anyway, since the real digihostel-api-staging
+      # service was provisioned manually rather than from this Blueprint
+      # (docs/observability.md's build-provenance section has the full
+      # investigation). /healthz now reads RENDER_GIT_COMMIT directly
+      # (apps/api/src/routes/health.ts), falling back to a plain BUILD_SHA
+      # env var only for non-Render hosts/local dev, where
+      # RENDER_GIT_COMMIT is naturally absent.
       # Secrets — deliberately `sync: false` (never a value in this file);
       # set once in the Render dashboard after the service is created. See
       # docs/runbooks/production-deployment.md §11 for the full list and

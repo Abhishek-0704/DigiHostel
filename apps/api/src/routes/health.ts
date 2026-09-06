@@ -14,11 +14,19 @@ export async function healthRoutes(app: FastifyInstance) {
     // host's own container-restart health check should target.
     { config: { rateLimit: false } },
     async () => {
-      // Build identifier (F-06 production hardening) — whatever the
-      // deployment host injects (e.g. a git SHA), so a running instance's
-      // exact build is verifiable after a deploy without exposing anything
-      // sensitive. "unknown" locally/in any environment that sets nothing.
-      return { status: "ok" as const, version: process.env.BUILD_SHA ?? "unknown" };
+      // Build identifier (F-06 production hardening, corrected by F-07E).
+      // `RENDER_GIT_COMMIT` is injected automatically by Render into every
+      // running container's environment — it is not something this
+      // repository configures, and it always reflects the commit actually
+      // running (confirmed live: docs/observability.md's build-provenance
+      // section). `BUILD_SHA` (a plain, host-agnostic env var) remains the
+      // fallback for local dev or any non-Render host, where
+      // RENDER_GIT_COMMIT is naturally absent — this is not two competing
+      // sources of truth, it is one platform-authoritative source with one
+      // portable fallback for environments that aren't Render at all.
+      // "unknown" only when neither is set.
+      const version = process.env.RENDER_GIT_COMMIT ?? process.env.BUILD_SHA ?? "unknown";
+      return { status: "ok" as const, version };
     },
   );
 
