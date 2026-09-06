@@ -58,7 +58,18 @@ jobs:
         run: supabase test db
 
       - name: Export local Supabase connection details
-        run: supabase status -o env >> "$GITHUB_ENV"
+        # F-07B fix: `supabase status -o env` quotes every value
+        # (`DB_URL="postgresql://..."`), but $GITHUB_ENV takes everything
+        # after the first `=` as the literal value verbatim — it does not
+        # strip shell-style quoting. Appending the CLI's raw output directly
+        # made every downstream env var (SUPABASE_URL included) contain
+        # literal quote characters, which is why `pnpm exec vitest run`
+        # below failed with "Invalid supabaseUrl: Must be a valid HTTP or
+        # HTTPS URL" on every run of this workflow to date (confirmed: this
+        # step has never actually succeeded, on this push or the prior one).
+        # Strips the surrounding quotes before appending — the same values,
+        # just in the format $GITHUB_ENV actually expects.
+        run: supabase status -o env | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*)="(.*)"$/\1=\2/' >> "$GITHUB_ENV"
 
       - name: Run test suite (unit + real-Postgres integration, DATABASE_URL/SUPABASE_URL/SUPABASE_ANON_KEY set from the step above)
         run: pnpm exec vitest run
