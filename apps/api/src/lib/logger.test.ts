@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import pino from "pino";
 
 /**
@@ -63,5 +63,48 @@ describe("logger redaction", () => {
     logger.info({ leaveRequestId: "11111111-1111-1111-1111-111111111111" }, "test event");
 
     expect(sink.data).toContain("11111111-1111-1111-1111-111111111111");
+  });
+});
+
+describe("logger base.buildSha precedence (F-07 closure)", () => {
+  // Imports the real singleton dynamically (module-load-time, so env vars
+  // must be set before import) rather than reproducing the precedence
+  // expression separately, so this test exercises the actual source of
+  // truth in lib/logger.ts, not a copy of it — mirrors the same
+  // RENDER_GIT_COMMIT/BUILD_SHA precedence health.test.ts already verifies
+  // for /healthz.version (F-07E); this closes the second call site F-07E
+  // missed.
+  it("prefers RENDER_GIT_COMMIT over BUILD_SHA when both are set", async () => {
+    const original = { render: process.env.RENDER_GIT_COMMIT, build: process.env.BUILD_SHA };
+    process.env.RENDER_GIT_COMMIT = "render-injected-sha";
+    process.env.BUILD_SHA = "stale-fallback-sha";
+    try {
+      vi.resetModules();
+      const { logger } = await import("./logger.js");
+      expect(
+        (logger as unknown as { bindings: () => { buildSha: string } }).bindings().buildSha,
+      ).toBe("render-injected-sha");
+    } finally {
+      process.env.RENDER_GIT_COMMIT = original.render;
+      process.env.BUILD_SHA = original.build;
+      vi.resetModules();
+    }
+  });
+
+  it("falls back to BUILD_SHA when RENDER_GIT_COMMIT is absent (local dev/non-Render hosts)", async () => {
+    const original = { render: process.env.RENDER_GIT_COMMIT, build: process.env.BUILD_SHA };
+    delete process.env.RENDER_GIT_COMMIT;
+    process.env.BUILD_SHA = "local-build-sha";
+    try {
+      vi.resetModules();
+      const { logger } = await import("./logger.js");
+      expect(
+        (logger as unknown as { bindings: () => { buildSha: string } }).bindings().buildSha,
+      ).toBe("local-build-sha");
+    } finally {
+      process.env.RENDER_GIT_COMMIT = original.render;
+      process.env.BUILD_SHA = original.build;
+      vi.resetModules();
+    }
   });
 });

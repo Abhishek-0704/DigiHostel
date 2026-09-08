@@ -232,9 +232,11 @@ Per this task's explicit instruction, none was invented. What exists today:
   for API/Postgres/Auth/Realtime) — available on the current plan per
   Supabase's own documented Free-tier behavior (short-window Reports
   history; Log Drains require Pro/Team/Enterprise, not purchased here).
-  **Available, not independently re-verified by dashboard inspection in
-  this task** (no interactive Supabase dashboard session was available in
-  this environment) — this is an honest gap, not a claim of "verified."
+  **Postgres logs (Logs Explorer) verified live and current, 2026-09-08**
+  (§13) via the Management API's analytics endpoint — a real, non-dashboard
+  form of verification, distinct from an interactive dashboard session
+  (still not performed). API/Auth/Realtime log streams and the Reports
+  dashboard's own charts remain unverified by direct inspection.
 - **Render's own log stream** for the staging service — the mechanism
   every piece of evidence in this document that predates F-07 (F-06's own
   verification) already relied on.
@@ -356,6 +358,16 @@ live-verified on Render staging.** The section below reflects that; see
   Logs Explorer/Reports/the Prometheus-compatible Metrics API, and should
   not be conflated with having "verified Supabase Logs/Reports/Metrics" —
   those remain unverified in this task.
+- **Re-verified live, 2026-09-08** (F-07 closure): `pgboss.job`, queried
+  directly (`supabase db query --linked`), shows `leave-notification-reap`
+  at **276 completed executions, 0 failed**, most recent completion
+  seconds before the query — the reaper's `* * * * *` schedule remains
+  alive and healthy two days after the F-07B evidence above. The two
+  application-specific queues (`leave-escalation-stage-evaluate`,
+  `leave-notification-deliver`) still show only 2 completed executions
+  each, both from 2026-09-06 — unchanged and correctly explained by
+  staging's `leave_requests` table remaining empty (no seed data run
+  remotely), not a worker defect.
 - **PRODUCTION BLOCKER — remaining, genuine**: F-05's and F-05A's
   migrations (`0005`/`0006`) are still **not applied to the real staging
   database** — `deploy-migrations.yml` has the identical missing-secrets
@@ -389,6 +401,101 @@ live-verified on Render staging.** The section below reflects that; see
   instruction); F-07B's task explicitly authorized, and performed, exactly
   one deployment push plus one necessary CI-config fix discovered in the
   process — both recorded in `docs/current-state.md`.
+- F-07 closure (this task, 2026-09-08) found and fixed the `logger.ts`
+  `buildSha` defect (§12) but did **not** commit or push it, and did not
+  upgrade Supabase/Render, add Sentry, or add any paid observability
+  platform.
+
+## 14. F-07 closure — operational question checklist (2026-09-08)
+
+Every question this task's own scope named, answered with a direct
+pointer to where the evidence already lives in this document:
+
+**API**: (1) alive → `/healthz` §6, live-verified 200. (2) DB-ready →
+`/readyz` §6, live-verified 200. (3) which build → `/healthz.version`,
+live-verified matching `HEAD` (§12). (4)-(6) which request/endpoint/status
+failed → `reqId` + `req`/`res` fields on every log line, §3, live-correlated
+§13. (7) duration → `responseTime` on every `"request completed"` line,
+§3. (8) locate the server log → Render's `GET /v1/logs`, verified this
+task, §13. (9) redaction → §1, unchanged, still correct.
+
+**Database**: (10) availability → `/readyz`'s `select 1` check, §6. (11)
+correlate DB failures to requests → `readyz: dependency check failed` logs
+`reqId` implicitly via the request child logger, §6. (12) critical DB
+failures visible in logs → yes, `request.log.warn`, §6. (13) RLS/auth vs.
+infra failures → **not distinguishable through `apps/api`'s logs, by
+design** (§4) — RLS denial and "doesn't exist" are indistinguishable at
+the database layer (the established anti-enumeration pattern); an
+infrastructure-level DB-unreachable failure surfaces distinctly via
+`/readyz`'s own warn log, which an RLS denial never produces (RLS denials
+never reach `/readyz` at all — they occur inside authorized route
+handlers, not the liveness check).
+
+**pg-boss**: (14) worker startup failures → caught by the outer
+`index.ts` try/catch, `process.exit(1)`, logged at `error`, §5.
+(15)-(16) job/reaper processing failures → `error`-level logs with
+`jobId`/`notificationId`, previously silent, fixed by F-07, §5,
+re-verified live 2026-09-08 (§9, 0 failures observed — healthy, not
+untested). (17) restart behaviour → `"pg-boss: started"`/`"pg-boss:
+stopped"`, §5. (18) repeated failures vs. ordinary errors → distinguished
+by `component: "worker"` tagging plus the specific `jobId`/queue name in
+each line, §1/§5 — no automated repeated-failure counter exists (§8's
+proposed-not-accepted alert table).
+
+**Notifications**: (19) processing failures → `notification: attempt
+failed, retry scheduled` / `notification worker: unexpected error`, §5.
+(20) retry exhaustion → `notification: retries exhausted, permanently
+failed`, §5. (21) stale claims/reaper → `notification reaper: reclaiming a
+stale delivery attempt`, §5, live-verified 2026-09-08 the schedule itself
+is firing (§9). (22) correlate to a leave request without sensitive
+payload → `leaveRequestId`/`notificationId`/`stage` only, never token/message
+content, §5.
+
+**Deployment**: (23) deployed build SHA → `/healthz.version`, F-07E,
+re-verified live matching `HEAD` this task (§12). (24) correlate a
+deployment to failures → possible via Render's own deploy-history API
+(F-07D precedent) cross-referenced against log timestamps/`buildSha` —
+**with §12's fix**, `buildSha` in logs is now also trustworthy for this,
+not just `/healthz`. (25) detect stale deployment state → exactly the
+class of defect §12 found and fixed; no automated staleness detector
+exists (would require comparing `/healthz.version` against Render's deploy
+API on a schedule — a **PRODUCTION FOLLOW-UP**, not built here).
+
+## 15. Metrics classification (2026-09-08)
+
+| Metric | Status | Evidence |
+|---|---|---|
+| API request count | AVAILABLE BUT NOT AUTOMATED | Countable from Render/Postgres logs by hand; no dashboard/counter built |
+| API error rate | AVAILABLE BUT NOT AUTOMATED | Same — `res.statusCode` on every log line, no aggregation |
+| API latency | AVAILABLE BUT NOT AUTOMATED | `responseTime` on every log line, §3, no aggregation/percentile computation |
+| Readiness failures | AVAILABLE BUT NOT AUTOMATED | `readyz: dependency check failed` warn logs, §6, no counter |
+| Worker failures | VERIFIED LIVE (currently zero) | `pgboss.job` query, §9/§14 — 0 failed across all three queues as of 2026-09-08 |
+| Notification failures | AVAILABLE BUT NOT AUTOMATED | Logged per-attempt (§5), queryable from `notifications` table, no dashboard |
+| Retry counts | AVAILABLE BUT NOT AUTOMATED | `attemptsMade` field on every retry log line, §5, no aggregation |
+| Stale claims | VERIFIED LIVE (currently zero pending) | Reaper's own log/schedule, §9 — 276 clean runs, no stale claims found in the sampled window |
+| Deployment failures | PRODUCTION-ONLY | Render's own deploy-history API shows success/failure per deploy (F-07D precedent); no automated alert on it |
+
+## 16. Alerting classification (2026-09-08)
+
+- **Existing alerts**: none — confirmed by inspection of `render.yaml` (no
+  alert/notification config) and by the absence of any
+  PagerDuty/Slack/webhook integration anywhere in this repository. Render's
+  own default account-level notifications (e.g. deploy failure emails) may
+  exist at the platform level but were not inspected this task (no
+  dashboard session) and are not something this repository configures.
+- **Verified**: nothing — no alert path was live-tested, because none
+  exists to test.
+- **Manual**: every signal in §15 marked "AVAILABLE BUT NOT AUTOMATED" is
+  detectable today by a human reading logs/querying the database on
+  demand — this is real, existing operational capability, just not
+  automated into a push notification.
+- **Production-only / PRODUCTION FOLLOW-UP** (not built here, per this
+  task's explicit instruction not to invent an unreliable workaround under
+  the current Free-tier environment): automated sustained-5xx alerting,
+  worker-failure alerting, deployment-failure alerting, readiness-failure
+  alerting. §8's proposed threshold table remains the starting point for
+  this future work — still marked proposed, not accepted, unchanged by
+  this task.
 
 ## 11. Build provenance (F-07E)
 
@@ -430,3 +537,70 @@ F-07E task's own final report for the exact deploy SHA / `/healthz.version`
 equality evidence at the time of the fix. The live service's now-unused,
 stale `BUILD_SHA` env var was left in place (harmless — no longer read
 with priority) rather than deleted, to keep this fix minimal.
+
+## 12. F-07 closure (2026-09-08) — a second `BUILD_SHA` call site, found and fixed
+
+**This does not reopen or redo F-07E.** F-07E's own fix (`/healthz.version`
+reading `RENDER_GIT_COMMIT` first) has not regressed — re-verified live this
+task: `GET /healthz` on staging returned `{"status":"ok","version":"53415ba09b571beee6633132a109b7e0963ac256"}`,
+exactly matching this repository's current `HEAD` at verification time.
+
+**A second, previously-missed call site was found**: `apps/api/src/lib/logger.ts`'s
+pino `base.buildSha` field still read only `process.env.BUILD_SHA` — the
+same stale, manually-set value F-07E's fix bypassed for `/healthz`, but
+never touched here. **Confirmed live**, not just by code inspection: real
+Render log lines fetched this task (`GET /v1/logs`, Render API) show every
+single log line on the live staging service carrying
+`"buildSha":"856d81eb3b143f79e4dbbedfb44841a3c4997037"` — a commit several
+pushes behind the actually-running `53415ba0...` — while `/healthz.version`
+correctly reports the current one. An operator correlating a log line's
+`buildSha` to "which commit produced this" would have been misled, even
+though "which build is deployed" (via `/healthz`) was already correct.
+
+**Fix, mirroring F-07E's own established pattern exactly**: `logger.ts`'s
+`base.buildSha` now reads `process.env.RENDER_GIT_COMMIT ?? process.env.BUILD_SHA ?? "unknown"`,
+identical precedence to `health.ts`. Two new tests added
+(`logger.test.ts`) verifying both branches of the precedence via a dynamic
+re-import of the real module (not a reproduction of the expression), mirroring
+`health.test.ts`'s existing F-07E test pattern. This fix has **not been
+deployed** — it exists only in this repository's working tree as of this
+task; the live service will continue showing the stale `buildSha` in logs
+until this change is committed, pushed, and deployed (a decision and action
+outside this task's own scope/authorization).
+
+## 13. Evidence gaps closed this task (2026-09-08)
+
+Two gaps §9/§8 previously recorded as honest, unresolved limitations were
+closed this task, using access that was not available in prior F-07
+sessions:
+
+- **Render log-stream access** — §9's "not available in this session"
+  note describes F-07B's own session specifically (only a deploy-trigger
+  credential then); F-07C/D (2026-09-06/07) already established broader
+  Render API access and used it for this exact kind of correlation.
+  **Re-verified fresh this task**: the same Render API key provided full
+  read access to `GET /v1/logs`, used to fetch real server-side log lines
+  and match them, request-ID for request-ID, against client-side responses
+  generated live this task (`req-6`→401 `missing_token`, `req-8`→404
+  route-not-found, `req-9`→400 `FST_ERR_CTP_INVALID_JSON_BODY`) — genuine
+  client↔server request-ID correlation, freshly confirmed with today's
+  traffic and today's deployed commit, not merely reused from an old
+  record. No sensitive data (tokens, headers, bodies) appeared in any
+  fetched log line. **This same log fetch is also what directly confirmed
+  §12's `buildSha` defect** — real log lines showing the stale value,
+  not an inference.
+- **Supabase Postgres logs (Logs Explorer)** — F-07C/D (2026-09-06/07)
+  already established these are accessible via the Management API
+  (`101 entries/day` at the time). §9's F-07B-specific text separately
+  says a *dashboard* session was never available — that remains true and
+  unchanged; the Management-API path is the one actually used, both then
+  and now. **Re-verified fresh this task**: the same
+  `analytics/endpoints/logs.all` endpoint returned real, current
+  `postgres_logs` rows — including, by coincidence, two of this task's own
+  malformed test SQL queries appearing within seconds of being issued,
+  direct proof of currency, not just accessibility. **Not claimed**: that
+  these logs carry the application's `x-request-id`/`reqId` — they don't
+  (DigiHostel's query layer, `@digihostel/db`, adds no request-tagging SQL
+  comment), so correlating a Postgres log line to a specific API request
+  would require timestamp proximity, not literal ID matching. Recorded
+  accurately, not overclaimed.

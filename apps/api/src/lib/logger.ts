@@ -58,7 +58,15 @@ export const logger = pino({
     pid: process.pid,
     hostname: hostname(),
     service: "digihostel-api",
-    buildSha: process.env.BUILD_SHA ?? "unknown",
+    // F-07 closure: matches health.ts's own F-07E-fixed precedence exactly.
+    // RENDER_GIT_COMMIT is injected automatically into every Render
+    // container and always reflects the commit actually running; BUILD_SHA
+    // is the local-dev/non-Render fallback. Before this fix, every log line
+    // on the live staging service reported a stale, manually-set BUILD_SHA
+    // value that no deploy ever updates (F-07E fixed /healthz.version but
+    // missed this second call site) — an operator correlating a log line's
+    // buildSha to "which commit produced this" would have been misled.
+    buildSha: process.env.RENDER_GIT_COMMIT ?? process.env.BUILD_SHA ?? "unknown",
   },
   transport: process.env.NODE_ENV === "development" ? { target: "pino-pretty" } : undefined,
 });
