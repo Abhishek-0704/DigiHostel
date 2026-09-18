@@ -11,6 +11,11 @@ export class FakeAuthDbPort implements AuthDbPort {
   students = new Map<string, { id: string; hostelId: string | null }>();
   parents = new Map<string, { id: string }>();
   staffMembers = new Map<string, { id: string; role: StaffRole; hostelId: string | null }>();
+  /** QG-04 remediation, F-QG04-02: seconds-since-epoch invalidation
+   * timestamp per staff auth id, mirroring `staff.sessions_invalidated_before`
+   * — `undefined`/absent means "never invalidated," matching the real
+   * column's NULL default. */
+  staffSessionsInvalidatedBefore = new Map<string, number>();
   linkedPairs = new Set<string>(); // `${parentId}:${studentId}`
   activeDeviceParents = new Set<string>();
 
@@ -20,7 +25,11 @@ export class FakeAuthDbPort implements AuthDbPort {
   async findParentByAuthUserId(authUserId: string) {
     return this.parents.get(authUserId) ?? null;
   }
-  async findStaffByAuthUserId(authUserId: string) {
+  async findStaffByAuthUserId(authUserId: string, tokenIssuedAtSeconds: number) {
+    const invalidatedBefore = this.staffSessionsInvalidatedBefore.get(authUserId);
+    if (invalidatedBefore !== undefined && tokenIssuedAtSeconds < invalidatedBefore) {
+      return null;
+    }
     return this.staffMembers.get(authUserId) ?? null;
   }
   async isParentLinkedToStudent(parentId: string, studentId: string) {
@@ -41,6 +50,13 @@ export class FakeAuthDbPort implements AuthDbPort {
   }
   addStaff(authUserId: string, id: string, role: StaffRole, hostelId: string | null = null) {
     this.staffMembers.set(authUserId, { id, role, hostelId });
+    return this;
+  }
+  /** QG-04 remediation, F-QG04-02 test helper — simulates Force Sign-Out
+   * having been triggered at `atSeconds` (seconds since epoch) for this
+   * staff auth id. */
+  invalidateStaffSessionsBefore(authUserId: string, atSeconds: number) {
+    this.staffSessionsInvalidatedBefore.set(authUserId, atSeconds);
     return this;
   }
   linkParentToStudent(parentId: string, studentId: string) {

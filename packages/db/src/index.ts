@@ -10,7 +10,34 @@ import * as schema from "./schema/index.js";
 // unrelated to this ORM — was added there; only this package's instance
 // (peer-scoped to `postgres` alone, matching the `db` export above) is ever
 // used anywhere in this workspace).
-export { eq, and, or, desc, asc, inArray, isNull, isNotNull, lt, sql } from "drizzle-orm";
+export {
+  eq,
+  ne,
+  and,
+  or,
+  desc,
+  asc,
+  inArray,
+  notInArray,
+  isNull,
+  isNotNull,
+  lt,
+  lte,
+  gt,
+  sql,
+} from "drizzle-orm";
+// Phase 5, Prompt 13 — Identity & Access Administration Center needs to
+// join `staff.auth_user_id` against `auth.users.email` (a real, existing
+// Drizzle-typed table this schema already imports internally, in
+// identity.ts) — re-exported here for the same "no consuming app needs its
+// own direct drizzle-orm dependency" reason as every operator above.
+export { authUsers } from "drizzle-orm/supabase";
+// `alias()` (for a self-referencing/second-role join, e.g. resolving both
+// an incident's assigned staff AND an event's acting staff against the same
+// `staff` table in one query) is Postgres-dialect-specific and lives under
+// drizzle-orm/pg-core, not the root package — not re-exported by "drizzle-orm"
+// itself.
+export { alias } from "drizzle-orm/pg-core";
 
 // Backend-privileged connection (ADR-006) — DATABASE_URL is Supabase's direct
 // Postgres connection string, not the Supabase JS SDK. Any direct client-side

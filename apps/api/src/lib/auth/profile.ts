@@ -23,6 +23,7 @@ import type { AppProfile } from "./types.js";
 export async function resolveAppProfile(
   authUserId: string,
   dbPort: AuthDbPort,
+  tokenIssuedAtSeconds: number,
 ): Promise<AppProfile> {
   const student = await dbPort.findStudentByAuthUserId(authUserId);
   if (student) {
@@ -34,7 +35,7 @@ export async function resolveAppProfile(
     return { kind: "parent", id: parent.id };
   }
 
-  const staffMember = await dbPort.findStaffByAuthUserId(authUserId);
+  const staffMember = await dbPort.findStaffByAuthUserId(authUserId, tokenIssuedAtSeconds);
   if (staffMember) {
     return {
       kind: "staff",

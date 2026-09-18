@@ -43,6 +43,97 @@
       "when": 1788699819876,
       "tag": "0006_f05a_security_incidents_reception_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789278339178,
+      "tag": "0008_adr003_device_registration_challenges",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789574400000,
+      "tag": "0012_fqg0201_exit_authorization_workflow_state_gate",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789660800000,
+      "tag": "0013_fqg0204_leave_exit_authorizations_realtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789747200000,
+      "tag": "0014_student_operations_search_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789833600000,
+      "tag": "0015_movement_engine_hostel_return",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789920000000,
+      "tag": "0016_emergency_operations_center_enums",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789920100000,
+      "tag": "0017_emergency_operations_center",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790006400000,
+      "tag": "0018_health_operations_center",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790092800000,
+      "tag": "0019_fqg0301_fqg0302_hostel_scope_remediation",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790179200000,
+      "tag": "0020_fqg0309_psr_hostel_admin_write_lockdown",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790265600000,
+      "tag": "0021_prompt13_staff_status_identity_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790352000000,
+      "tag": "0022_prompt14_configuration_center",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790524800000,
+      "tag": "0023_fqg0402_force_sign_out_session_invalidation",
+      "breakpoints": true
     }
   ]
 }
