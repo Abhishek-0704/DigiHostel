@@ -12,6 +12,8 @@ import { healthCaseRoutes } from "./routes/health-cases.js";
 import { auditRoutes } from "./routes/audit.js";
 import { staffRoutes } from "./routes/staff.js";
 import { configurationRoutes } from "./routes/configuration.js";
+import { analyticsRoutes } from "./routes/analytics.js";
+import { reportsRoutes } from "./routes/reports.js";
 import { authRoutes } from "./routes/auth.js";
 import { deviceRoutes } from "./routes/devices.js";
 import { registerAuth, type RegisterAuthOverrides } from "./plugins/auth.js";
@@ -26,6 +28,8 @@ import {
   registerConfiguration,
   type RegisterConfigurationOverrides,
 } from "./plugins/configuration.js";
+import { registerAnalytics, type RegisterAnalyticsOverrides } from "./plugins/analytics.js";
+import { registerReports, type RegisterReportsOverrides } from "./plugins/reports.js";
 import { registerRateLimit, type RegisterRateLimitOverrides } from "./plugins/rateLimit.js";
 import { registerOtpAuth, type RegisterOtpAuthOverrides } from "./plugins/otpAuth.js";
 import { registerDevice, type RegisterDeviceOverrides } from "./plugins/device.js";
@@ -86,6 +90,12 @@ export interface BuildAppOptions {
   /** Test-only dependency injection — see plugins/configuration.ts. Never
    * used in production. */
   configurationOverrides?: RegisterConfigurationOverrides;
+  /** Test-only dependency injection — see plugins/analytics.ts. Never used
+   * in production. */
+  analyticsOverrides?: RegisterAnalyticsOverrides;
+  /** Test-only dependency injection — see plugins/reports.ts. Never used in
+   * production. */
+  reportsOverrides?: RegisterReportsOverrides;
   /** Test-only dependency injection — see plugins/rateLimit.ts. Never used
    * in production. */
   rateLimitOverrides?: RegisterRateLimitOverrides;
@@ -157,6 +167,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
   registerAudit(app, options.auditOverrides);
   registerStaff(app, options.staffOverrides);
   registerConfiguration(app, options.configurationOverrides);
+  registerAnalytics(app, options.analyticsOverrides);
+  registerReports(app, options.reportsOverrides);
   registerOtpAuth(app, options.otpAuthOverrides);
   registerDevice(app, options.deviceOverrides);
 
@@ -208,6 +220,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
   // previously wired to a route) — no new authentication mechanism, role,
   // or permission was introduced.
   await app.register(configurationRoutes, { prefix: "/api/v1" });
+  await app.register(analyticsRoutes, { prefix: "/api/v1" });
+  await app.register(reportsRoutes, { prefix: "/api/v1" });
   // F-02 remediation (PRR Phase 13) — the ADR-020-required eligibility gate.
   // Deliberately not gated by NODE_ENV: unlike test-auth.ts, this is real
   // product login functionality, not a demonstration route.
