@@ -1249,6 +1249,338 @@ export const getAuditStatisticsResponse = zod.object({
 
 
 /**
+ * Reuses the existing `reports:view` permission boundary — reception_warden and library_incharge are both denied, matching the frontend's own already-established role grants. Every field is a fresh aggregate query over the caller's own authorized hostel scope, computed from the already-certified Leave/Movement/ Notification domains' own authoritative tables — never a client-supplied, cached, or fabricated number. `dateFrom`/`dateTo` default to the trailing 7-day window when omitted; the selected range must not exceed 90 days.
+
+ * @summary hostel_admin/super_admin-only: Operational Intelligence executive overview (Phase 6, Prompt 15)
+
+ */
+export const getAnalyticsOverviewQueryParams = zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional()
+})
+
+export const getAnalyticsOverviewResponse = zod.object({
+  "periodFrom": zod.string().datetime({}),
+  "periodTo": zod.string().datetime({}),
+  "presence": zod.object({
+  "totalStudents": zod.number(),
+  "studentsInside": zod.number(),
+  "studentsOutside": zod.number()
+}).describe('Point-in-time (not period-bound) student presence, reusing `DrizzleStudentRepository.getHostelPresenceSummary()` verbatim (Phase 4, Prompt 9 remediation) — never re-derived independently.\n'),
+  "leave": zod.object({
+  "pendingNow": zod.number(),
+  "createdInPeriod": zod.number(),
+  "approvedInPeriod": zod.number(),
+  "rejectedInPeriod": zod.number(),
+  "expiredInPeriod": zod.number(),
+  "approvalRate": zod.number().nullable().describe('approvedInPeriod \/ (approvedInPeriod + rejectedInPeriod), or null if that denominator is 0 — never 0, which would falsely claim every decided request was rejected.\n'),
+  "avgResponseMinutes": zod.number().nullable().describe('Average minutes from the \"Send for Parent Approval\" event to the parent\'s decision event, over requests decided in the selected period; null if no such pair exists in the period.\n')
+}).describe('Every count is derived from a SPECIFIC authoritative event — never collapsed into one ambiguous \"leave status\" number. See `apps\/api\/src\/domain\/analytics\/types.ts`\'s `LeaveOverviewSummary` doc comment for the exact source\/calculation of every field.\n'),
+  "movement": zod.object({
+  "returnsInPeriod": zod.number(),
+  "avgDurationMinutes": zod.number().nullable().describe('Average minutes from exit authorization to hostel return, over returns recorded in the selected period; null if unresolvable.\n')
+}),
+  "notifications": zod.object({
+  "generatedInPeriod": zod.number(),
+  "deliveredInPeriod": zod.number(),
+  "failedInPeriod": zod.number()
+}).describe('Summarizes the real, persistent `notifications` table (parent\/ student leave-escalation delivery records) — never the Reception Dashboard\'s own client-local Notification Center, which has no persistent staff-facing record at all.\n')
+})
+
+
+/**
+ * Same authorization/hostel-scope/date-range boundary as GET /analytics/overview. Each series is derived from a specific, named authoritative event (leave request creation, or a real `responded` approval-event with the matching outcome) — never a single collapsed "leave status" count. Every UTC calendar day in the requested range is present in each series, with a genuine zero count for a day with no matching events.
+
+ * @summary hostel_admin/super_admin-only: day-bucketed leave-request trend (Phase 6, Prompt 15)
+
+ */
+export const getAnalyticsLeaveTrendQueryParams = zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional()
+})
+
+export const getAnalyticsLeaveTrendResponse = zod.object({
+  "periodFrom": zod.string().datetime({}),
+  "periodTo": zod.string().datetime({}),
+  "createdByDay": zod.array(zod.object({
+  "date": zod.string().date(),
+  "count": zod.number()
+}).describe('One UTC calendar day. A day with genuinely zero matching events is included with count 0 — a real, server-computed zero, not an omission.\n')),
+  "approvedByDay": zod.array(zod.object({
+  "date": zod.string().date(),
+  "count": zod.number()
+}).describe('One UTC calendar day. A day with genuinely zero matching events is included with count 0 — a real, server-computed zero, not an omission.\n')),
+  "rejectedByDay": zod.array(zod.object({
+  "date": zod.string().date(),
+  "count": zod.number()
+}).describe('One UTC calendar day. A day with genuinely zero matching events is included with count 0 — a real, server-computed zero, not an omission.\n'))
+})
+
+
+/**
+ * Same authorization/hostel-scope/date-range boundary as GET /analytics/overview. `returnsByHour` is always exactly 24 entries (0-23, UTC), even for an empty period — a genuine distribution over every possible hour, not merely the hours that happened to have an event.
+
+ * @summary hostel_admin/super_admin-only: day- and hour-bucketed hostel-return movement trend (Phase 6, Prompt 15)
+
+ */
+export const getAnalyticsMovementTrendQueryParams = zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional()
+})
+
+export const getAnalyticsMovementTrendResponseReturnsByHourItemHourMin = 0;
+export const getAnalyticsMovementTrendResponseReturnsByHourItemHourMax = 23;
+
+
+
+export const getAnalyticsMovementTrendResponse = zod.object({
+  "periodFrom": zod.string().datetime({}),
+  "periodTo": zod.string().datetime({}),
+  "returnsByDay": zod.array(zod.object({
+  "date": zod.string().date(),
+  "count": zod.number()
+}).describe('One UTC calendar day. A day with genuinely zero matching events is included with count 0 — a real, server-computed zero, not an omission.\n')),
+  "returnsByHour": zod.array(zod.object({
+  "hour": zod.number().min(getAnalyticsMovementTrendResponseReturnsByHourItemHourMin).max(getAnalyticsMovementTrendResponseReturnsByHourItemHourMax),
+  "count": zod.number()
+})).describe('Always exactly 24 entries (hour 0-23), even for an empty period.')
+})
+
+
+/**
+ * Reuses the existing `reports:view` permission boundary — identical role grant to Analytics (Phase 6, Prompt 15). Every report's available fields/filters/sort options and status (implemented/unavailable) are server-derived; a report marked `unavailable` carries an honest `unavailableReason` rather than being silently omitted.
+
+ * @summary hostel_admin/super_admin-only: the fixed, server-owned report catalog (Phase 6, Prompt 16 — Enterprise Reporting Platform)
+
+ */
+export const getReportsCatalogResponse = zod.object({
+  "reports": zod.array(zod.object({
+  "id": zod.enum(['operational_summary', 'leave_authorization', 'parent_approval', 'student_movement', 'emergency_incident', 'health_operations', 'notification_activity', 'audit_activity', 'administrative_user_activity', 'configuration_change', 'hostel_occupancy']).describe('The complete, fixed catalog of reports this platform can produce — never a dynamic\/client-registered report id.\n'),
+  "name": zod.string(),
+  "category": zod.enum(['operations', 'leave', 'movement', 'safety', 'notifications', 'compliance', 'administration']),
+  "description": zod.string(),
+  "status": zod.enum(['implemented', 'unavailable']),
+  "unavailableReason": zod.string().nullish(),
+  "availableFields": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string()
+})),
+  "availableFilters": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "type": zod.enum(['date_range', 'multi_select']),
+  "options": zod.array(zod.string()).optional().describe('Only present for `multi_select` — the real, fixed set of accepted values.')
+})),
+  "sortFields": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string()
+})),
+  "defaultSortField": zod.string(),
+  "isPaginated": zod.boolean()
+}))
+})
+
+
+/**
+ * A pure read operation over an existing certified domain's own data — most reports reuse that domain's own service directly (Emergency/Health/Audit/Analytics), never a second access path. Hostel scope is always resolved server-side from the caller's own staff identity; no `hostelId` field exists anywhere in this request. Every filter value is validated against that specific report's own server-declared allow-list — an unrecognized filter, field, or sort value is rejected with 400, never silently ignored or fabricated. Results are bounded (page/pageSize, max 50 per page) — never an unbounded dataset. No PDF/XLSX/CSV file is generated by this endpoint.
+
+ * @summary hostel_admin/super_admin-only: bounded, server-validated report preview (Phase 6, Prompt 16)
+
+ */
+export const previewReportParams = zod.object({
+  "reportId": zod.enum(['operational_summary', 'leave_authorization', 'parent_approval', 'student_movement', 'emergency_incident', 'health_operations', 'notification_activity', 'audit_activity', 'administrative_user_activity', 'configuration_change', 'hostel_occupancy'])
+})
+
+export const previewReportBodyPageDefault = 1;
+
+export const previewReportBodyPageSizeDefault = 20;
+export const previewReportBodyPageSizeMax = 50;
+
+
+
+export const previewReportBody = zod.object({
+  "reportId": zod.enum(['operational_summary', 'leave_authorization', 'parent_approval', 'student_movement', 'emergency_incident', 'health_operations', 'notification_activity', 'audit_activity', 'administrative_user_activity', 'configuration_change', 'hostel_occupancy']).describe('The complete, fixed catalog of reports this platform can produce — never a dynamic\/client-registered report id.\n'),
+  "filters": zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional(),
+  "statuses": zod.array(zod.string()).optional(),
+  "categories": zod.array(zod.string()).optional(),
+  "severities": zod.array(zod.string()).optional(),
+  "eventTypes": zod.array(zod.string()).optional(),
+  "modules": zod.array(zod.string()).optional()
+}).optional().describe('A report\'s own pre-declared filter values — every key is validated server-side against that specific report\'s `availableFilters`; an unrecognized key or value is rejected with 400.\n'),
+  "selectedFields": zod.array(zod.string()).optional().describe('A subset of the report\'s own `availableFields` ids — omit for every field.'),
+  "sortField": zod.string().optional(),
+  "sortDir": zod.enum(['asc', 'desc']).optional(),
+  "page": zod.number().min(1).default(previewReportBodyPageDefault),
+  "pageSize": zod.number().min(1).max(previewReportBodyPageSizeMax).default(previewReportBodyPageSizeDefault)
+})
+
+export const previewReportResponse = zod.object({
+  "reportId": zod.enum(['operational_summary', 'leave_authorization', 'parent_approval', 'student_movement', 'emergency_incident', 'health_operations', 'notification_activity', 'audit_activity', 'administrative_user_activity', 'configuration_change', 'hostel_occupancy']).describe('The complete, fixed catalog of reports this platform can produce — never a dynamic\/client-registered report id.\n'),
+  "generatedAt": zod.string().datetime({}).describe('The moment this query executed — the closest honest approximation of a snapshot timestamp this platform offers, not a formal immutable database snapshot\/version.\n'),
+  "periodFrom": zod.string().datetime({}).nullish(),
+  "periodTo": zod.string().datetime({}).nullish(),
+  "columns": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string()
+})),
+  "rows": zod.array(zod.record(zod.string(), zod.unknown())),
+  "summary": zod.record(zod.string(), zod.unknown()).nullable().describe('Populated only for the single-row Operational Summary report.'),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
+})
+
+
+/**
+ * Personal — never organization-wide/shared. Favourites are the same template row with `isFavorite: true`, not a second list.
+
+ * @summary hostel_admin/super_admin-only: the caller's own saved report templates (Phase 6, Prompt 16)
+
+ */
+export const listReportTemplatesResponse = zod.object({
+  "templates": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "reportId": zod.enum(['operational_summary', 'leave_authorization', 'parent_approval', 'student_movement', 'emergency_incident', 'health_operations', 'notification_activity', 'audit_activity', 'administrative_user_activity', 'configuration_change', 'hostel_occupancy']).describe('The complete, fixed catalog of reports this platform can produce — never a dynamic\/client-registered report id.\n'),
+  "name": zod.string(),
+  "filters": zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional(),
+  "statuses": zod.array(zod.string()).optional(),
+  "categories": zod.array(zod.string()).optional(),
+  "severities": zod.array(zod.string()).optional(),
+  "eventTypes": zod.array(zod.string()).optional(),
+  "modules": zod.array(zod.string()).optional()
+}).describe('A report\'s own pre-declared filter values — every key is validated server-side against that specific report\'s `availableFilters`; an unrecognized key or value is rejected with 400.\n'),
+  "selectedFields": zod.array(zod.string()),
+  "isFavorite": zod.boolean(),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}))
+})
+
+
+/**
+ * Stores a validated report configuration (report id + selected fields + filters) — never arbitrary SQL/field/table names. A second template with the same name for the same staff member is rejected with 409.
+
+ * @summary hostel_admin/super_admin-only: save a report configuration as a named template
+
+ */
+export const createReportTemplateBodyNameMax = 120;
+
+export const createReportTemplateBodyIsFavoriteDefault = false;
+
+export const createReportTemplateBody = zod.object({
+  "reportId": zod.enum(['operational_summary', 'leave_authorization', 'parent_approval', 'student_movement', 'emergency_incident', 'health_operations', 'notification_activity', 'audit_activity', 'administrative_user_activity', 'configuration_change', 'hostel_occupancy']).describe('The complete, fixed catalog of reports this platform can produce — never a dynamic\/client-registered report id.\n'),
+  "name": zod.string().min(1).max(createReportTemplateBodyNameMax),
+  "filters": zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional(),
+  "statuses": zod.array(zod.string()).optional(),
+  "categories": zod.array(zod.string()).optional(),
+  "severities": zod.array(zod.string()).optional(),
+  "eventTypes": zod.array(zod.string()).optional(),
+  "modules": zod.array(zod.string()).optional()
+}).optional().describe('A report\'s own pre-declared filter values — every key is validated server-side against that specific report\'s `availableFilters`; an unrecognized key or value is rejected with 400.\n'),
+  "selectedFields": zod.array(zod.string()).optional(),
+  "isFavorite": zod.boolean().optional()
+})
+
+
+/**
+ * Only the owning staff member may update their own template — 404 for any other template id.
+ * @summary hostel_admin/super_admin-only: rename/update/favourite the caller's own template
+
+ */
+export const updateReportTemplateParams = zod.object({
+  "templateId": zod.string().uuid()
+})
+
+export const updateReportTemplateBodyNameMax = 120;
+
+
+
+export const updateReportTemplateBody = zod.object({
+  "name": zod.string().min(1).max(updateReportTemplateBodyNameMax).optional(),
+  "filters": zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional(),
+  "statuses": zod.array(zod.string()).optional(),
+  "categories": zod.array(zod.string()).optional(),
+  "severities": zod.array(zod.string()).optional(),
+  "eventTypes": zod.array(zod.string()).optional(),
+  "modules": zod.array(zod.string()).optional()
+}).optional().describe('A report\'s own pre-declared filter values — every key is validated server-side against that specific report\'s `availableFilters`; an unrecognized key or value is rejected with 400.\n'),
+  "selectedFields": zod.array(zod.string()).optional(),
+  "isFavorite": zod.boolean().optional()
+})
+
+export const updateReportTemplateResponse = zod.object({
+  "id": zod.string().uuid(),
+  "reportId": zod.enum(['operational_summary', 'leave_authorization', 'parent_approval', 'student_movement', 'emergency_incident', 'health_operations', 'notification_activity', 'audit_activity', 'administrative_user_activity', 'configuration_change', 'hostel_occupancy']).describe('The complete, fixed catalog of reports this platform can produce — never a dynamic\/client-registered report id.\n'),
+  "name": zod.string(),
+  "filters": zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional(),
+  "statuses": zod.array(zod.string()).optional(),
+  "categories": zod.array(zod.string()).optional(),
+  "severities": zod.array(zod.string()).optional(),
+  "eventTypes": zod.array(zod.string()).optional(),
+  "modules": zod.array(zod.string()).optional()
+}).describe('A report\'s own pre-declared filter values — every key is validated server-side against that specific report\'s `availableFilters`; an unrecognized key or value is rejected with 400.\n'),
+  "selectedFields": zod.array(zod.string()),
+  "isFavorite": zod.boolean(),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+})
+
+
+/**
+ * Only the owning staff member may delete their own template — 404 for any other template id.
+ * @summary hostel_admin/super_admin-only: delete the caller's own template
+
+ */
+export const deleteReportTemplateParams = zod.object({
+  "templateId": zod.string().uuid()
+})
+
+
+/**
+ * A minimal execution-history record — which report, when, a filter summary, and how many rows it returned. Distinct from a saved template (a configuration, not an event) and from a generated artifact (no file is ever produced by this platform).
+
+ * @summary hostel_admin/super_admin-only: the caller's own recent report executions (Phase 6, Prompt 16)
+
+ */
+export const getReportHistoryQueryLimitDefault = 20;
+export const getReportHistoryQueryLimitMax = 100;
+
+
+
+export const getReportHistoryQueryParams = zod.object({
+  "limit": zod.number().min(1).max(getReportHistoryQueryLimitMax).default(getReportHistoryQueryLimitDefault)
+})
+
+export const getReportHistoryResponse = zod.object({
+  "history": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "reportId": zod.enum(['operational_summary', 'leave_authorization', 'parent_approval', 'student_movement', 'emergency_incident', 'health_operations', 'notification_activity', 'audit_activity', 'administrative_user_activity', 'configuration_change', 'hostel_occupancy']).describe('The complete, fixed catalog of reports this platform can produce — never a dynamic\/client-registered report id.\n'),
+  "filtersSummary": zod.object({
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional(),
+  "statuses": zod.array(zod.string()).optional(),
+  "categories": zod.array(zod.string()).optional(),
+  "severities": zod.array(zod.string()).optional(),
+  "eventTypes": zod.array(zod.string()).optional(),
+  "modules": zod.array(zod.string()).optional()
+}).describe('A report\'s own pre-declared filter values — every key is validated server-side against that specific report\'s `availableFilters`; an unrecognized key or value is rejected with 400.\n'),
+  "rowCount": zod.number(),
+  "generatedAt": zod.string().datetime({})
+}))
+})
+
+
+/**
  * Requires an AAL2 super_admin session — the first super_admin-only endpoint in this API family (every other staff-facing route uses the standard reception_warden/hostel_admin/super_admin set). Matches `staff`'s own pre-existing `staff_all_super_admin` RLS grant exactly. `q` matches a case-insensitive PREFIX against full_name OR email.
 
  * @summary super_admin-only: server-side paginated/filtered staff directory (Phase 5, Prompt 13 — Identity & Access Administration Center)

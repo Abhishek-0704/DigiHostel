@@ -1628,6 +1628,368 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /analytics/overview:
+    get:
+      operationId: getAnalyticsOverview
+      tags: [analytics]
+      summary: >
+        hostel_admin/super_admin-only: Operational Intelligence executive
+        overview (Phase 6, Prompt 15)
+      description: >
+        Reuses the existing `reports:view` permission boundary —
+        reception_warden and library_incharge are both denied, matching the
+        frontend's own already-established role grants. Every field is a
+        fresh aggregate query over the caller's own authorized hostel
+        scope, computed from the already-certified Leave/Movement/
+        Notification domains' own authoritative tables — never a
+        client-supplied, cached, or fabricated number. `dateFrom`/`dateTo`
+        default to the trailing 7-day window when omitted; the selected
+        range must not exceed 90 days.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: dateFrom
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: dateTo
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Real, scope-derived operational overview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsOverview"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /analytics/leave-trend:
+    get:
+      operationId: getAnalyticsLeaveTrend
+      tags: [analytics]
+      summary: >
+        hostel_admin/super_admin-only: day-bucketed leave-request trend
+        (Phase 6, Prompt 15)
+      description: >
+        Same authorization/hostel-scope/date-range boundary as
+        GET /analytics/overview. Each series is derived from a specific,
+        named authoritative event (leave request creation, or a real
+        `responded` approval-event with the matching outcome) — never a
+        single collapsed "leave status" count. Every UTC calendar day in
+        the requested range is present in each series, with a genuine
+        zero count for a day with no matching events.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: dateFrom
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: dateTo
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Real, scope-derived leave trend.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsLeaveTrend"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /analytics/movement-trend:
+    get:
+      operationId: getAnalyticsMovementTrend
+      tags: [analytics]
+      summary: >
+        hostel_admin/super_admin-only: day- and hour-bucketed hostel-return
+        movement trend (Phase 6, Prompt 15)
+      description: >
+        Same authorization/hostel-scope/date-range boundary as
+        GET /analytics/overview. `returnsByHour` is always exactly 24
+        entries (0-23, UTC), even for an empty period — a genuine
+        distribution over every possible hour, not merely the hours that
+        happened to have an event.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: dateFrom
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: dateTo
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Real, scope-derived movement trend.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsMovementTrend"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /reports/catalog:
+    get:
+      operationId: getReportsCatalog
+      tags: [reports]
+      summary: >
+        hostel_admin/super_admin-only: the fixed, server-owned report
+        catalog (Phase 6, Prompt 16 — Enterprise Reporting Platform)
+      description: >
+        Reuses the existing `reports:view` permission boundary — identical
+        role grant to Analytics (Phase 6, Prompt 15). Every report's
+        available fields/filters/sort options and status
+        (implemented/unavailable) are server-derived; a report marked
+        `unavailable` carries an honest `unavailableReason` rather than
+        being silently omitted.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The full report catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reports]
+                properties:
+                  reports:
+                    type: array
+                    items: { $ref: "#/components/schemas/ReportDefinition" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /reports/{reportId}/preview:
+    post:
+      operationId: previewReport
+      tags: [reports]
+      summary: >
+        hostel_admin/super_admin-only: bounded, server-validated report
+        preview (Phase 6, Prompt 16)
+      description: >
+        A pure read operation over an existing certified domain's own data
+        — most reports reuse that domain's own service directly
+        (Emergency/Health/Audit/Analytics), never a second access path.
+        Hostel scope is always resolved server-side from the caller's own
+        staff identity; no `hostelId` field exists anywhere in this
+        request. Every filter value is validated against that specific
+        report's own server-declared allow-list — an unrecognized filter,
+        field, or sort value is rejected with 400, never silently ignored
+        or fabricated. Results are bounded (page/pageSize, max 50 per
+        page) — never an unbounded dataset. No PDF/XLSX/CSV file is
+        generated by this endpoint.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/ReportId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportPreviewRequest"
+      responses:
+        "200":
+          description: Bounded report preview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportPreviewResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The requested report is marked unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /reports/templates:
+    get:
+      operationId: listReportTemplates
+      tags: [reports]
+      summary: >
+        hostel_admin/super_admin-only: the caller's own saved report
+        templates (Phase 6, Prompt 16)
+      description: >
+        Personal — never organization-wide/shared. Favourites are the same
+        template row with `isFavorite: true`, not a second list.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The caller's own templates, favourites first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [templates]
+                properties:
+                  templates:
+                    type: array
+                    items: { $ref: "#/components/schemas/ReportTemplate" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createReportTemplate
+      tags: [reports]
+      summary: >
+        hostel_admin/super_admin-only: save a report configuration as a
+        named template
+      description: >
+        Stores a validated report configuration (report id + selected
+        fields + filters) — never arbitrary SQL/field/table names. A
+        second template with the same name for the same staff member is
+        rejected with 409.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportTemplateCreateRequest"
+      responses:
+        "201":
+          description: Template saved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportTemplate" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A template with this name already exists for this staff member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /reports/templates/{templateId}:
+    patch:
+      operationId: updateReportTemplate
+      tags: [reports]
+      summary: >
+        hostel_admin/super_admin-only: rename/update/favourite the caller's
+        own template
+      description: Only the owning staff member may update their own template — 404 for any other template id.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportTemplateUpdateRequest"
+      responses:
+        "200":
+          description: Updated template.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportTemplate" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A template with this name already exists for this staff member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+    delete:
+      operationId: deleteReportTemplate
+      tags: [reports]
+      summary: >
+        hostel_admin/super_admin-only: delete the caller's own template
+      description: Only the owning staff member may delete their own template — 404 for any other template id.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /reports/history:
+    get:
+      operationId: getReportHistory
+      tags: [reports]
+      summary: >
+        hostel_admin/super_admin-only: the caller's own recent report
+        executions (Phase 6, Prompt 16)
+      description: >
+        A minimal execution-history record — which report, when, a filter
+        summary, and how many rows it returned. Distinct from a saved
+        template (a configuration, not an event) and from a generated
+        artifact (no file is ever produced by this platform).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: The caller's own recent report executions, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [history]
+                properties:
+                  history:
+                    type: array
+                    items: { $ref: "#/components/schemas/ReportHistoryEntry" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /staff:
     get:
       operationId: listStaff
@@ -3305,6 +3667,322 @@ components:
             device: { type: integer }
             staff-auth: { type: integer }
             other: { type: integer }
+
+    AnalyticsPresenceSummary:
+      type: object
+      description: >
+        Point-in-time (not period-bound) student presence, reusing
+        `DrizzleStudentRepository.getHostelPresenceSummary()` verbatim
+        (Phase 4, Prompt 9 remediation) — never re-derived independently.
+      required: [totalStudents, studentsInside, studentsOutside]
+      properties:
+        totalStudents: { type: integer }
+        studentsInside: { type: integer }
+        studentsOutside: { type: integer }
+
+    AnalyticsLeaveOverview:
+      type: object
+      description: >
+        Every count is derived from a SPECIFIC authoritative event — never
+        collapsed into one ambiguous "leave status" number. See
+        `apps/api/src/domain/analytics/types.ts`'s `LeaveOverviewSummary`
+        doc comment for the exact source/calculation of every field.
+      required:
+        [
+          pendingNow,
+          createdInPeriod,
+          approvedInPeriod,
+          rejectedInPeriod,
+          expiredInPeriod,
+          approvalRate,
+          avgResponseMinutes,
+        ]
+      properties:
+        pendingNow: { type: integer }
+        createdInPeriod: { type: integer }
+        approvedInPeriod: { type: integer }
+        rejectedInPeriod: { type: integer }
+        expiredInPeriod: { type: integer }
+        approvalRate:
+          type: [number, "null"]
+          description: >
+            approvedInPeriod / (approvedInPeriod + rejectedInPeriod), or
+            null if that denominator is 0 — never 0, which would falsely
+            claim every decided request was rejected.
+        avgResponseMinutes:
+          type: [number, "null"]
+          description: >
+            Average minutes from the "Send for Parent Approval" event to
+            the parent's decision event, over requests decided in the
+            selected period; null if no such pair exists in the period.
+
+    AnalyticsMovementOverview:
+      type: object
+      required: [returnsInPeriod, avgDurationMinutes]
+      properties:
+        returnsInPeriod: { type: integer }
+        avgDurationMinutes:
+          type: [number, "null"]
+          description: >
+            Average minutes from exit authorization to hostel return, over
+            returns recorded in the selected period; null if unresolvable.
+
+    AnalyticsNotificationOverview:
+      type: object
+      description: >
+        Summarizes the real, persistent `notifications` table (parent/
+        student leave-escalation delivery records) — never the Reception
+        Dashboard's own client-local Notification Center, which has no
+        persistent staff-facing record at all.
+      required: [generatedInPeriod, deliveredInPeriod, failedInPeriod]
+      properties:
+        generatedInPeriod: { type: integer }
+        deliveredInPeriod: { type: integer }
+        failedInPeriod: { type: integer }
+
+    AnalyticsOverview:
+      type: object
+      required: [periodFrom, periodTo, presence, leave, movement, notifications]
+      properties:
+        periodFrom: { type: string, format: date-time }
+        periodTo: { type: string, format: date-time }
+        presence: { $ref: "#/components/schemas/AnalyticsPresenceSummary" }
+        leave: { $ref: "#/components/schemas/AnalyticsLeaveOverview" }
+        movement: { $ref: "#/components/schemas/AnalyticsMovementOverview" }
+        notifications: { $ref: "#/components/schemas/AnalyticsNotificationOverview" }
+
+    AnalyticsTrendPoint:
+      type: object
+      description: >
+        One UTC calendar day. A day with genuinely zero matching events is
+        included with count 0 — a real, server-computed zero, not an
+        omission.
+      required: [date, count]
+      properties:
+        date: { type: string, format: date, example: "2026-01-15" }
+        count: { type: integer }
+
+    AnalyticsHourBucket:
+      type: object
+      required: [hour, count]
+      properties:
+        hour: { type: integer, minimum: 0, maximum: 23 }
+        count: { type: integer }
+
+    AnalyticsLeaveTrend:
+      type: object
+      required: [periodFrom, periodTo, createdByDay, approvedByDay, rejectedByDay]
+      properties:
+        periodFrom: { type: string, format: date-time }
+        periodTo: { type: string, format: date-time }
+        createdByDay:
+          type: array
+          items: { $ref: "#/components/schemas/AnalyticsTrendPoint" }
+        approvedByDay:
+          type: array
+          items: { $ref: "#/components/schemas/AnalyticsTrendPoint" }
+        rejectedByDay:
+          type: array
+          items: { $ref: "#/components/schemas/AnalyticsTrendPoint" }
+
+    AnalyticsMovementTrend:
+      type: object
+      required: [periodFrom, periodTo, returnsByDay, returnsByHour]
+      properties:
+        periodFrom: { type: string, format: date-time }
+        periodTo: { type: string, format: date-time }
+        returnsByDay:
+          type: array
+          items: { $ref: "#/components/schemas/AnalyticsTrendPoint" }
+        returnsByHour:
+          type: array
+          description: Always exactly 24 entries (hour 0-23), even for an empty period.
+          items: { $ref: "#/components/schemas/AnalyticsHourBucket" }
+
+    ReportId:
+      type: string
+      description: >
+        The complete, fixed catalog of reports this platform can produce —
+        never a dynamic/client-registered report id.
+      enum:
+        - operational_summary
+        - leave_authorization
+        - parent_approval
+        - student_movement
+        - emergency_incident
+        - health_operations
+        - notification_activity
+        - audit_activity
+        - administrative_user_activity
+        - configuration_change
+        - hostel_occupancy
+
+    ReportFieldDefinition:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+
+    ReportFilterDefinition:
+      type: object
+      required: [id, label, type]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        type: { type: string, enum: [date_range, multi_select] }
+        options:
+          type: array
+          items: { type: string }
+          description: Only present for `multi_select` — the real, fixed set of accepted values.
+
+    ReportSortFieldDefinition:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+
+    ReportDefinition:
+      type: object
+      required:
+        - id
+        - name
+        - category
+        - description
+        - status
+        - availableFields
+        - availableFilters
+        - sortFields
+        - defaultSortField
+        - isPaginated
+      properties:
+        id: { $ref: "#/components/schemas/ReportId" }
+        name: { type: string }
+        category:
+          type: string
+          enum: [operations, leave, movement, safety, notifications, compliance, administration]
+        description: { type: string }
+        status: { type: string, enum: [implemented, unavailable] }
+        unavailableReason: { type: string, nullable: true }
+        availableFields:
+          type: array
+          items: { $ref: "#/components/schemas/ReportFieldDefinition" }
+        availableFilters:
+          type: array
+          items: { $ref: "#/components/schemas/ReportFilterDefinition" }
+        sortFields:
+          type: array
+          items: { $ref: "#/components/schemas/ReportSortFieldDefinition" }
+        defaultSortField: { type: string }
+        isPaginated: { type: boolean }
+
+    ReportFilters:
+      type: object
+      description: >
+        A report's own pre-declared filter values — every key is validated
+        server-side against that specific report's `availableFilters`; an
+        unrecognized key or value is rejected with 400.
+      additionalProperties: true
+      properties:
+        dateFrom: { type: string, format: date-time }
+        dateTo: { type: string, format: date-time }
+        statuses: { type: array, items: { type: string } }
+        categories: { type: array, items: { type: string } }
+        severities: { type: array, items: { type: string } }
+        eventTypes: { type: array, items: { type: string } }
+        modules: { type: array, items: { type: string } }
+
+    ReportPreviewRequest:
+      type: object
+      required: [reportId]
+      properties:
+        reportId: { $ref: "#/components/schemas/ReportId" }
+        filters: { $ref: "#/components/schemas/ReportFilters" }
+        selectedFields:
+          type: array
+          items: { type: string }
+          description: A subset of the report's own `availableFields` ids — omit for every field.
+        sortField: { type: string }
+        sortDir: { type: string, enum: [asc, desc] }
+        page: { type: integer, minimum: 1, default: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 50, default: 20 }
+
+    ReportPreviewResult:
+      type: object
+      required: [reportId, generatedAt, columns, rows, summary, total, page, pageSize]
+      properties:
+        reportId: { $ref: "#/components/schemas/ReportId" }
+        generatedAt:
+          type: string
+          format: date-time
+          description: >
+            The moment this query executed — the closest honest
+            approximation of a snapshot timestamp this platform offers, not
+            a formal immutable database snapshot/version.
+        periodFrom: { type: string, format: date-time, nullable: true }
+        periodTo: { type: string, format: date-time, nullable: true }
+        columns:
+          type: array
+          items: { $ref: "#/components/schemas/ReportFieldDefinition" }
+        rows:
+          type: array
+          items: { type: object, additionalProperties: true }
+        summary:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Populated only for the single-row Operational Summary report.
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    ReportTemplate:
+      type: object
+      required: [id, reportId, name, filters, selectedFields, isFavorite, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        reportId: { $ref: "#/components/schemas/ReportId" }
+        name: { type: string }
+        filters: { $ref: "#/components/schemas/ReportFilters" }
+        selectedFields:
+          type: array
+          items: { type: string }
+        isFavorite: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ReportTemplateCreateRequest:
+      type: object
+      required: [reportId, name]
+      properties:
+        reportId: { $ref: "#/components/schemas/ReportId" }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        filters: { $ref: "#/components/schemas/ReportFilters" }
+        selectedFields:
+          type: array
+          items: { type: string }
+        isFavorite: { type: boolean, default: false }
+
+    ReportTemplateUpdateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        filters: { $ref: "#/components/schemas/ReportFilters" }
+        selectedFields:
+          type: array
+          items: { type: string }
+        isFavorite: { type: boolean }
+
+    ReportHistoryEntry:
+      type: object
+      required: [id, reportId, filtersSummary, rowCount, generatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        reportId: { $ref: "#/components/schemas/ReportId" }
+        filtersSummary: { $ref: "#/components/schemas/ReportFilters" }
+        rowCount: { type: integer }
+        generatedAt: { type: string, format: date-time }
 
     StaffAdminRole:
       type: string

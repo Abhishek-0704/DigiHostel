@@ -858,6 +858,310 @@ export interface AuditStatistics {
 }
 
 /**
+ * Point-in-time (not period-bound) student presence, reusing `DrizzleStudentRepository.getHostelPresenceSummary()` verbatim (Phase 4, Prompt 9 remediation) — never re-derived independently.
+
+ */
+export interface AnalyticsPresenceSummary {
+  totalStudents: number;
+  studentsInside: number;
+  studentsOutside: number;
+}
+
+/**
+ * approvedInPeriod / (approvedInPeriod + rejectedInPeriod), or null if that denominator is 0 — never 0, which would falsely claim every decided request was rejected.
+
+ */
+export type AnalyticsLeaveOverviewApprovalRate = number | null;
+
+/**
+ * Average minutes from the "Send for Parent Approval" event to the parent's decision event, over requests decided in the selected period; null if no such pair exists in the period.
+
+ */
+export type AnalyticsLeaveOverviewAvgResponseMinutes = number | null;
+
+/**
+ * Every count is derived from a SPECIFIC authoritative event — never collapsed into one ambiguous "leave status" number. See `apps/api/src/domain/analytics/types.ts`'s `LeaveOverviewSummary` doc comment for the exact source/calculation of every field.
+
+ */
+export interface AnalyticsLeaveOverview {
+  pendingNow: number;
+  createdInPeriod: number;
+  approvedInPeriod: number;
+  rejectedInPeriod: number;
+  expiredInPeriod: number;
+  /** approvedInPeriod / (approvedInPeriod + rejectedInPeriod), or null if that denominator is 0 — never 0, which would falsely claim every decided request was rejected.
+ */
+  approvalRate: AnalyticsLeaveOverviewApprovalRate;
+  /** Average minutes from the "Send for Parent Approval" event to the parent's decision event, over requests decided in the selected period; null if no such pair exists in the period.
+ */
+  avgResponseMinutes: AnalyticsLeaveOverviewAvgResponseMinutes;
+}
+
+/**
+ * Average minutes from exit authorization to hostel return, over returns recorded in the selected period; null if unresolvable.
+
+ */
+export type AnalyticsMovementOverviewAvgDurationMinutes = number | null;
+
+export interface AnalyticsMovementOverview {
+  returnsInPeriod: number;
+  /** Average minutes from exit authorization to hostel return, over returns recorded in the selected period; null if unresolvable.
+ */
+  avgDurationMinutes: AnalyticsMovementOverviewAvgDurationMinutes;
+}
+
+/**
+ * Summarizes the real, persistent `notifications` table (parent/ student leave-escalation delivery records) — never the Reception Dashboard's own client-local Notification Center, which has no persistent staff-facing record at all.
+
+ */
+export interface AnalyticsNotificationOverview {
+  generatedInPeriod: number;
+  deliveredInPeriod: number;
+  failedInPeriod: number;
+}
+
+export interface AnalyticsOverview {
+  periodFrom: string;
+  periodTo: string;
+  presence: AnalyticsPresenceSummary;
+  leave: AnalyticsLeaveOverview;
+  movement: AnalyticsMovementOverview;
+  notifications: AnalyticsNotificationOverview;
+}
+
+/**
+ * One UTC calendar day. A day with genuinely zero matching events is included with count 0 — a real, server-computed zero, not an omission.
+
+ */
+export interface AnalyticsTrendPoint {
+  date: string;
+  count: number;
+}
+
+export interface AnalyticsHourBucket {
+  /**
+   * @minimum 0
+   * @maximum 23
+   */
+  hour: number;
+  count: number;
+}
+
+export interface AnalyticsLeaveTrend {
+  periodFrom: string;
+  periodTo: string;
+  createdByDay: AnalyticsTrendPoint[];
+  approvedByDay: AnalyticsTrendPoint[];
+  rejectedByDay: AnalyticsTrendPoint[];
+}
+
+export interface AnalyticsMovementTrend {
+  periodFrom: string;
+  periodTo: string;
+  returnsByDay: AnalyticsTrendPoint[];
+  /** Always exactly 24 entries (hour 0-23), even for an empty period. */
+  returnsByHour: AnalyticsHourBucket[];
+}
+
+/**
+ * The complete, fixed catalog of reports this platform can produce — never a dynamic/client-registered report id.
+
+ */
+export type ReportId = typeof ReportId[keyof typeof ReportId];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ReportId = {
+  operational_summary: 'operational_summary',
+  leave_authorization: 'leave_authorization',
+  parent_approval: 'parent_approval',
+  student_movement: 'student_movement',
+  emergency_incident: 'emergency_incident',
+  health_operations: 'health_operations',
+  notification_activity: 'notification_activity',
+  audit_activity: 'audit_activity',
+  administrative_user_activity: 'administrative_user_activity',
+  configuration_change: 'configuration_change',
+  hostel_occupancy: 'hostel_occupancy',
+} as const;
+
+export interface ReportFieldDefinition {
+  id: string;
+  label: string;
+}
+
+export type ReportFilterDefinitionType = typeof ReportFilterDefinitionType[keyof typeof ReportFilterDefinitionType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ReportFilterDefinitionType = {
+  date_range: 'date_range',
+  multi_select: 'multi_select',
+} as const;
+
+export interface ReportFilterDefinition {
+  id: string;
+  label: string;
+  type: ReportFilterDefinitionType;
+  /** Only present for `multi_select` — the real, fixed set of accepted values. */
+  options?: string[];
+}
+
+export interface ReportSortFieldDefinition {
+  id: string;
+  label: string;
+}
+
+export type ReportDefinitionCategory = typeof ReportDefinitionCategory[keyof typeof ReportDefinitionCategory];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ReportDefinitionCategory = {
+  operations: 'operations',
+  leave: 'leave',
+  movement: 'movement',
+  safety: 'safety',
+  notifications: 'notifications',
+  compliance: 'compliance',
+  administration: 'administration',
+} as const;
+
+export type ReportDefinitionStatus = typeof ReportDefinitionStatus[keyof typeof ReportDefinitionStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ReportDefinitionStatus = {
+  implemented: 'implemented',
+  unavailable: 'unavailable',
+} as const;
+
+export interface ReportDefinition {
+  id: ReportId;
+  name: string;
+  category: ReportDefinitionCategory;
+  description: string;
+  status: ReportDefinitionStatus;
+  /** @nullable */
+  unavailableReason?: string | null;
+  availableFields: ReportFieldDefinition[];
+  availableFilters: ReportFilterDefinition[];
+  sortFields: ReportSortFieldDefinition[];
+  defaultSortField: string;
+  isPaginated: boolean;
+}
+
+/**
+ * A report's own pre-declared filter values — every key is validated server-side against that specific report's `availableFilters`; an unrecognized key or value is rejected with 400.
+
+ */
+export interface ReportFilters {
+  dateFrom?: string;
+  dateTo?: string;
+  statuses?: string[];
+  categories?: string[];
+  severities?: string[];
+  eventTypes?: string[];
+  modules?: string[];
+  [key: string]: unknown;
+ }
+
+export type ReportPreviewRequestSortDir = typeof ReportPreviewRequestSortDir[keyof typeof ReportPreviewRequestSortDir];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ReportPreviewRequestSortDir = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export interface ReportPreviewRequest {
+  reportId: ReportId;
+  filters?: ReportFilters;
+  /** A subset of the report's own `availableFields` ids — omit for every field. */
+  selectedFields?: string[];
+  sortField?: string;
+  sortDir?: ReportPreviewRequestSortDir;
+  /** @minimum 1 */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  pageSize?: number;
+}
+
+export type ReportPreviewResultRowsItem = { [key: string]: unknown };
+
+/**
+ * Populated only for the single-row Operational Summary report.
+ * @nullable
+ */
+export type ReportPreviewResultSummary = { [key: string]: unknown } | null;
+
+export interface ReportPreviewResult {
+  reportId: ReportId;
+  /** The moment this query executed — the closest honest approximation of a snapshot timestamp this platform offers, not a formal immutable database snapshot/version.
+ */
+  generatedAt: string;
+  /** @nullable */
+  periodFrom?: string | null;
+  /** @nullable */
+  periodTo?: string | null;
+  columns: ReportFieldDefinition[];
+  rows: ReportPreviewResultRowsItem[];
+  /**
+   * Populated only for the single-row Operational Summary report.
+   * @nullable
+   */
+  summary: ReportPreviewResultSummary;
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ReportTemplate {
+  id: string;
+  reportId: ReportId;
+  name: string;
+  filters: ReportFilters;
+  selectedFields: string[];
+  isFavorite: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReportTemplateCreateRequest {
+  reportId: ReportId;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  name: string;
+  filters?: ReportFilters;
+  selectedFields?: string[];
+  isFavorite?: boolean;
+}
+
+export interface ReportTemplateUpdateRequest {
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  name?: string;
+  filters?: ReportFilters;
+  selectedFields?: string[];
+  isFavorite?: boolean;
+}
+
+export interface ReportHistoryEntry {
+  id: string;
+  reportId: ReportId;
+  filtersSummary: ReportFilters;
+  rowCount: number;
+  generatedAt: string;
+}
+
+/**
  * The real `staff_role` database enum values — never invented.
  */
 export type StaffAdminRole = typeof StaffAdminRole[keyof typeof StaffAdminRole];
@@ -1277,6 +1581,41 @@ export const ListAuditEventsSortDir = {
   asc: 'asc',
   desc: 'desc',
 } as const;
+
+export type GetAnalyticsOverviewParams = {
+dateFrom?: string;
+dateTo?: string;
+};
+
+export type GetAnalyticsLeaveTrendParams = {
+dateFrom?: string;
+dateTo?: string;
+};
+
+export type GetAnalyticsMovementTrendParams = {
+dateFrom?: string;
+dateTo?: string;
+};
+
+export type GetReportsCatalog200 = {
+  reports: ReportDefinition[];
+};
+
+export type ListReportTemplates200 = {
+  templates: ReportTemplate[];
+};
+
+export type GetReportHistoryParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+};
+
+export type GetReportHistory200 = {
+  history: ReportHistoryEntry[];
+};
 
 export type ListStaffParams = {
 /**
@@ -4434,6 +4773,720 @@ export function useGetAuditStatistics<TData = Awaited<ReturnType<typeof getAudit
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAuditStatisticsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Reuses the existing `reports:view` permission boundary — reception_warden and library_incharge are both denied, matching the frontend's own already-established role grants. Every field is a fresh aggregate query over the caller's own authorized hostel scope, computed from the already-certified Leave/Movement/ Notification domains' own authoritative tables — never a client-supplied, cached, or fabricated number. `dateFrom`/`dateTo` default to the trailing 7-day window when omitted; the selected range must not exceed 90 days.
+
+ * @summary hostel_admin/super_admin-only: Operational Intelligence executive overview (Phase 6, Prompt 15)
+
+ */
+export const getAnalyticsOverview = (
+    params?: GetAnalyticsOverviewParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<AnalyticsOverview>(
+      {url: `/analytics/overview`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetAnalyticsOverviewQueryKey = (params?: GetAnalyticsOverviewParams,) => {
+    return [
+    `/analytics/overview`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetAnalyticsOverviewQueryOptions = <TData = Awaited<ReturnType<typeof getAnalyticsOverview>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(params?: GetAnalyticsOverviewParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAnalyticsOverviewQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAnalyticsOverview>>> = ({ signal }) => getAnalyticsOverview(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsOverview>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAnalyticsOverviewQueryResult = NonNullable<Awaited<ReturnType<typeof getAnalyticsOverview>>>
+export type GetAnalyticsOverviewQueryError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin-only: Operational Intelligence executive overview (Phase 6, Prompt 15)
+
+ */
+
+export function useGetAnalyticsOverview<TData = Awaited<ReturnType<typeof getAnalyticsOverview>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(
+ params?: GetAnalyticsOverviewParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAnalyticsOverviewQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Same authorization/hostel-scope/date-range boundary as GET /analytics/overview. Each series is derived from a specific, named authoritative event (leave request creation, or a real `responded` approval-event with the matching outcome) — never a single collapsed "leave status" count. Every UTC calendar day in the requested range is present in each series, with a genuine zero count for a day with no matching events.
+
+ * @summary hostel_admin/super_admin-only: day-bucketed leave-request trend (Phase 6, Prompt 15)
+
+ */
+export const getAnalyticsLeaveTrend = (
+    params?: GetAnalyticsLeaveTrendParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<AnalyticsLeaveTrend>(
+      {url: `/analytics/leave-trend`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetAnalyticsLeaveTrendQueryKey = (params?: GetAnalyticsLeaveTrendParams,) => {
+    return [
+    `/analytics/leave-trend`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetAnalyticsLeaveTrendQueryOptions = <TData = Awaited<ReturnType<typeof getAnalyticsLeaveTrend>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(params?: GetAnalyticsLeaveTrendParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsLeaveTrend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAnalyticsLeaveTrendQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAnalyticsLeaveTrend>>> = ({ signal }) => getAnalyticsLeaveTrend(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsLeaveTrend>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAnalyticsLeaveTrendQueryResult = NonNullable<Awaited<ReturnType<typeof getAnalyticsLeaveTrend>>>
+export type GetAnalyticsLeaveTrendQueryError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin-only: day-bucketed leave-request trend (Phase 6, Prompt 15)
+
+ */
+
+export function useGetAnalyticsLeaveTrend<TData = Awaited<ReturnType<typeof getAnalyticsLeaveTrend>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(
+ params?: GetAnalyticsLeaveTrendParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsLeaveTrend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAnalyticsLeaveTrendQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Same authorization/hostel-scope/date-range boundary as GET /analytics/overview. `returnsByHour` is always exactly 24 entries (0-23, UTC), even for an empty period — a genuine distribution over every possible hour, not merely the hours that happened to have an event.
+
+ * @summary hostel_admin/super_admin-only: day- and hour-bucketed hostel-return movement trend (Phase 6, Prompt 15)
+
+ */
+export const getAnalyticsMovementTrend = (
+    params?: GetAnalyticsMovementTrendParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<AnalyticsMovementTrend>(
+      {url: `/analytics/movement-trend`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetAnalyticsMovementTrendQueryKey = (params?: GetAnalyticsMovementTrendParams,) => {
+    return [
+    `/analytics/movement-trend`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetAnalyticsMovementTrendQueryOptions = <TData = Awaited<ReturnType<typeof getAnalyticsMovementTrend>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(params?: GetAnalyticsMovementTrendParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsMovementTrend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAnalyticsMovementTrendQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAnalyticsMovementTrend>>> = ({ signal }) => getAnalyticsMovementTrend(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsMovementTrend>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAnalyticsMovementTrendQueryResult = NonNullable<Awaited<ReturnType<typeof getAnalyticsMovementTrend>>>
+export type GetAnalyticsMovementTrendQueryError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin-only: day- and hour-bucketed hostel-return movement trend (Phase 6, Prompt 15)
+
+ */
+
+export function useGetAnalyticsMovementTrend<TData = Awaited<ReturnType<typeof getAnalyticsMovementTrend>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(
+ params?: GetAnalyticsMovementTrendParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAnalyticsMovementTrend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAnalyticsMovementTrendQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Reuses the existing `reports:view` permission boundary — identical role grant to Analytics (Phase 6, Prompt 15). Every report's available fields/filters/sort options and status (implemented/unavailable) are server-derived; a report marked `unavailable` carries an honest `unavailableReason` rather than being silently omitted.
+
+ * @summary hostel_admin/super_admin-only: the fixed, server-owned report catalog (Phase 6, Prompt 16 — Enterprise Reporting Platform)
+
+ */
+export const getReportsCatalog = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<GetReportsCatalog200>(
+      {url: `/reports/catalog`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetReportsCatalogQueryKey = () => {
+    return [
+    `/reports/catalog`
+    ] as const;
+    }
+
+    
+export const getGetReportsCatalogQueryOptions = <TData = Awaited<ReturnType<typeof getReportsCatalog>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReportsCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetReportsCatalogQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getReportsCatalog>>> = ({ signal }) => getReportsCatalog(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getReportsCatalog>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetReportsCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof getReportsCatalog>>>
+export type GetReportsCatalogQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin-only: the fixed, server-owned report catalog (Phase 6, Prompt 16 — Enterprise Reporting Platform)
+
+ */
+
+export function useGetReportsCatalog<TData = Awaited<ReturnType<typeof getReportsCatalog>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReportsCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetReportsCatalogQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * A pure read operation over an existing certified domain's own data — most reports reuse that domain's own service directly (Emergency/Health/Audit/Analytics), never a second access path. Hostel scope is always resolved server-side from the caller's own staff identity; no `hostelId` field exists anywhere in this request. Every filter value is validated against that specific report's own server-declared allow-list — an unrecognized filter, field, or sort value is rejected with 400, never silently ignored or fabricated. Results are bounded (page/pageSize, max 50 per page) — never an unbounded dataset. No PDF/XLSX/CSV file is generated by this endpoint.
+
+ * @summary hostel_admin/super_admin-only: bounded, server-validated report preview (Phase 6, Prompt 16)
+
+ */
+export const previewReport = (
+    reportId: ReportId,
+    reportPreviewRequest: ReportPreviewRequest,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ReportPreviewResult>(
+      {url: `/reports/${reportId}/preview`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: reportPreviewRequest, signal
+    },
+      options);
+    }
+  
+
+
+export const getPreviewReportMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewReport>>, TError,{reportId: ReportId;data: ReportPreviewRequest}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof previewReport>>, TError,{reportId: ReportId;data: ReportPreviewRequest}, TContext> => {
+
+const mutationKey = ['previewReport'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewReport>>, {reportId: ReportId;data: ReportPreviewRequest}> = (props) => {
+          const {reportId,data} = props ?? {};
+
+          return  previewReport(reportId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewReportMutationResult = NonNullable<Awaited<ReturnType<typeof previewReport>>>
+    export type PreviewReportMutationBody = ReportPreviewRequest
+    export type PreviewReportMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody
+
+    /**
+ * @summary hostel_admin/super_admin-only: bounded, server-validated report preview (Phase 6, Prompt 16)
+
+ */
+export const usePreviewReport = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewReport>>, TError,{reportId: ReportId;data: ReportPreviewRequest}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof previewReport>>,
+        TError,
+        {reportId: ReportId;data: ReportPreviewRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getPreviewReportMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Personal — never organization-wide/shared. Favourites are the same template row with `isFavorite: true`, not a second list.
+
+ * @summary hostel_admin/super_admin-only: the caller's own saved report templates (Phase 6, Prompt 16)
+
+ */
+export const listReportTemplates = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ListReportTemplates200>(
+      {url: `/reports/templates`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListReportTemplatesQueryKey = () => {
+    return [
+    `/reports/templates`
+    ] as const;
+    }
+
+    
+export const getListReportTemplatesQueryOptions = <TData = Awaited<ReturnType<typeof listReportTemplates>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReportTemplates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListReportTemplatesQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listReportTemplates>>> = ({ signal }) => listReportTemplates(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listReportTemplates>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListReportTemplatesQueryResult = NonNullable<Awaited<ReturnType<typeof listReportTemplates>>>
+export type ListReportTemplatesQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin-only: the caller's own saved report templates (Phase 6, Prompt 16)
+
+ */
+
+export function useListReportTemplates<TData = Awaited<ReturnType<typeof listReportTemplates>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReportTemplates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListReportTemplatesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Stores a validated report configuration (report id + selected fields + filters) — never arbitrary SQL/field/table names. A second template with the same name for the same staff member is rejected with 409.
+
+ * @summary hostel_admin/super_admin-only: save a report configuration as a named template
+
+ */
+export const createReportTemplate = (
+    reportTemplateCreateRequest: ReportTemplateCreateRequest,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ReportTemplate>(
+      {url: `/reports/templates`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: reportTemplateCreateRequest, signal
+    },
+      options);
+    }
+  
+
+
+export const getCreateReportTemplateMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createReportTemplate>>, TError,{data: ReportTemplateCreateRequest}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createReportTemplate>>, TError,{data: ReportTemplateCreateRequest}, TContext> => {
+
+const mutationKey = ['createReportTemplate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createReportTemplate>>, {data: ReportTemplateCreateRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createReportTemplate(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateReportTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof createReportTemplate>>>
+    export type CreateReportTemplateMutationBody = ReportTemplateCreateRequest
+    export type CreateReportTemplateMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody
+
+    /**
+ * @summary hostel_admin/super_admin-only: save a report configuration as a named template
+
+ */
+export const useCreateReportTemplate = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createReportTemplate>>, TError,{data: ReportTemplateCreateRequest}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createReportTemplate>>,
+        TError,
+        {data: ReportTemplateCreateRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateReportTemplateMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Only the owning staff member may update their own template — 404 for any other template id.
+ * @summary hostel_admin/super_admin-only: rename/update/favourite the caller's own template
+
+ */
+export const updateReportTemplate = (
+    templateId: string,
+    reportTemplateUpdateRequest: ReportTemplateUpdateRequest,
+ options?: SecondParameter<typeof customFetch>,) => {
+      
+      
+      return customFetch<ReportTemplate>(
+      {url: `/reports/templates/${templateId}`, method: 'PATCH',
+      headers: {'Content-Type': 'application/json', },
+      data: reportTemplateUpdateRequest
+    },
+      options);
+    }
+  
+
+
+export const getUpdateReportTemplateMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateReportTemplate>>, TError,{templateId: string;data: ReportTemplateUpdateRequest}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateReportTemplate>>, TError,{templateId: string;data: ReportTemplateUpdateRequest}, TContext> => {
+
+const mutationKey = ['updateReportTemplate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateReportTemplate>>, {templateId: string;data: ReportTemplateUpdateRequest}> = (props) => {
+          const {templateId,data} = props ?? {};
+
+          return  updateReportTemplate(templateId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateReportTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof updateReportTemplate>>>
+    export type UpdateReportTemplateMutationBody = ReportTemplateUpdateRequest
+    export type UpdateReportTemplateMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody
+
+    /**
+ * @summary hostel_admin/super_admin-only: rename/update/favourite the caller's own template
+
+ */
+export const useUpdateReportTemplate = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateReportTemplate>>, TError,{templateId: string;data: ReportTemplateUpdateRequest}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateReportTemplate>>,
+        TError,
+        {templateId: string;data: ReportTemplateUpdateRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateReportTemplateMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Only the owning staff member may delete their own template — 404 for any other template id.
+ * @summary hostel_admin/super_admin-only: delete the caller's own template
+
+ */
+export const deleteReportTemplate = (
+    templateId: string,
+ options?: SecondParameter<typeof customFetch>,) => {
+      
+      
+      return customFetch<void>(
+      {url: `/reports/templates/${templateId}`, method: 'DELETE'
+    },
+      options);
+    }
+  
+
+
+export const getDeleteReportTemplateMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteReportTemplate>>, TError,{templateId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteReportTemplate>>, TError,{templateId: string}, TContext> => {
+
+const mutationKey = ['deleteReportTemplate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteReportTemplate>>, {templateId: string}> = (props) => {
+          const {templateId} = props ?? {};
+
+          return  deleteReportTemplate(templateId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteReportTemplateMutationResult = NonNullable<Awaited<ReturnType<typeof deleteReportTemplate>>>
+    
+    export type DeleteReportTemplateMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary hostel_admin/super_admin-only: delete the caller's own template
+
+ */
+export const useDeleteReportTemplate = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteReportTemplate>>, TError,{templateId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteReportTemplate>>,
+        TError,
+        {templateId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteReportTemplateMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * A minimal execution-history record — which report, when, a filter summary, and how many rows it returned. Distinct from a saved template (a configuration, not an event) and from a generated artifact (no file is ever produced by this platform).
+
+ * @summary hostel_admin/super_admin-only: the caller's own recent report executions (Phase 6, Prompt 16)
+
+ */
+export const getReportHistory = (
+    params?: GetReportHistoryParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<GetReportHistory200>(
+      {url: `/reports/history`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetReportHistoryQueryKey = (params?: GetReportHistoryParams,) => {
+    return [
+    `/reports/history`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getGetReportHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getReportHistory>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(params?: GetReportHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReportHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetReportHistoryQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getReportHistory>>> = ({ signal }) => getReportHistory(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getReportHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetReportHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getReportHistory>>>
+export type GetReportHistoryQueryError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin-only: the caller's own recent report executions (Phase 6, Prompt 16)
+
+ */
+
+export function useGetReportHistory<TData = Awaited<ReturnType<typeof getReportHistory>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(
+ params?: GetReportHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReportHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetReportHistoryQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
