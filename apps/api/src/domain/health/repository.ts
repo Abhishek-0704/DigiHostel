@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, notInArray, sql, db, alias } from "@digihostel/db";
+import { and, asc, desc, eq, gte, lte, inArray, notInArray, sql, db, alias } from "@digihostel/db";
 import {
   students,
   hostels,
@@ -217,6 +217,12 @@ export class DrizzleHealthRepository implements HealthRepository {
       conditions.push(
         notInArray(healthCases.status, ["resolved", "discharged", "closed", "cancelled"]),
       );
+    }
+    if (input.dateFrom) {
+      conditions.push(gte(healthCases.createdAt, new Date(input.dateFrom)));
+    }
+    if (input.dateTo) {
+      conditions.push(lte(healthCases.createdAt, new Date(input.dateTo)));
     }
     const condition = and(...conditions);
 

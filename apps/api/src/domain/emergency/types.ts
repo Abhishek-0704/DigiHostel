@@ -84,6 +84,15 @@ export interface EmergencyListInput extends StaffScopeInput {
   /** Convenience shortcut: status NOT IN (resolved, closed) — matches the
    * queue's default view, mirrors QueueFilterBar's "unresolved only". */
   activeOnly?: boolean;
+  /** Phase 6, Prompt 16 (Enterprise Reporting Platform) — additive, optional
+   * date-range filter on `reportedAt` (createdAt), following the exact
+   * precedent `HealthCaseListInput.studentId` already established (Prompt
+   * 11 closure): a new optional filter, applied AFTER the existing
+   * hostel-scope check, serving a new read consumer without changing any
+   * existing caller's behavior. The Emergency Operations Center's own queue
+   * never sets these — only the Reporting domain does. */
+  dateFrom?: string;
+  dateTo?: string;
   page: number;
   pageSize: number;
   sortBy: EmergencySortField;

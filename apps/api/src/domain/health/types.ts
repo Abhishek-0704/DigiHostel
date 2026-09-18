@@ -121,6 +121,12 @@ export interface HealthCaseListInput extends StaffScopeInput {
    * the operational queue reads, just filtered per-student instead of
    * per-hostel/status. Never a second, duplicated history store. */
   studentId?: string;
+  /** Phase 6, Prompt 16 (Enterprise Reporting Platform) — additive, optional
+   * date-range filter on `reportedAt` (createdAt), following the exact same
+   * precedent `studentId` above already established. The Health Operations
+   * Center's own queue never sets these — only the Reporting domain does. */
+  dateFrom?: string;
+  dateTo?: string;
   page: number;
   pageSize: number;
   sortBy: HealthCaseSortField;

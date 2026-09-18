@@ -21,7 +21,13 @@ export function Breadcrumb({ segments }: BreadcrumbProps) {
         {segments.map((segment, index) => {
           const isLast = index === segments.length - 1;
           return (
-            <li key={segment.label}>
+            // Keyed by position, not `segment.label` — a breadcrumb trail
+            // can legitimately contain two segments with the identical
+            // display text (e.g. a nav group and its one nested item both
+            // named "Reports", Phase 6 Prompt 16), which a label-keyed list
+            // would collide on. The trail is always rendered fresh, in a
+            // fixed left-to-right order, so a positional key is safe here.
+            <li key={index}>
               {segment.to && !isLast ? (
                 <Link to={segment.to}>{segment.label}</Link>
               ) : (

@@ -38,7 +38,18 @@ export const AUDIT_ACTOR_TYPES = ["student", "parent", "staff", "system"] as con
 export type AuditActorType = (typeof AUDIT_ACTOR_TYPES)[number];
 
 /** Every distinct `entity_type` value currently written by any module,
- * confirmed by repository-wide search — never invented. */
+ * confirmed by repository-wide search — never invented.
+ *
+ * `configuration_entries` (Phase 5, Prompt 14) was genuinely already being
+ * written by `domain/configuration/repository.ts` but had been left off this
+ * list — an honest, minor completeness gap found and closed during Phase 6,
+ * Prompt 16 (Enterprise Reporting Platform)'s reconnaissance, needed so the
+ * Configuration Change Report can filter `AuditService.list()` down to
+ * configuration events precisely, rather than relying on the coarser
+ * `module: "other"` bucket every unclassified action currently falls into.
+ * Purely additive: extends what values the already-correct, already-hostel-
+ * scoped `entity_type IN (...)` filter accepts, with no change to the
+ * public `/audit` route's authorization/scope logic. */
 export const AUDIT_ENTITY_TYPES = [
   "leave_requests",
   "security_incidents",
@@ -46,6 +57,7 @@ export const AUDIT_ENTITY_TYPES = [
   "staff",
   "trusted_devices",
   "device_registration_challenges",
+  "configuration_entries",
 ] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 

@@ -1,0 +1,77 @@
+.scopeIndicator {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: var(--spacing-lg);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.sidebarCard {
+  padding: var(--spacing-md);
+}
+
+.sidebarHeading {
+  margin: 0 0 var(--spacing-sm) 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.main {
+  min-width: 0;
+}
+
+.placeholderCard,
+.builderCard {
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.reportName {
+  margin: 0;
+  font-size: 18px;
+}
+
+.reportDescription {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.unavailableNotice {
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+.builderActions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.deferredNote {
+  margin: var(--spacing-lg) 0 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}

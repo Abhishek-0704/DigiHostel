@@ -24,6 +24,7 @@ export {
   lt,
   lte,
   gt,
+  gte,
   sql,
 } from "drizzle-orm";
 // Phase 5, Prompt 13 — Identity & Access Administration Center needs to

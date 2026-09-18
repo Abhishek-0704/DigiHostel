@@ -1,0 +1,44 @@
+.loading {
+  padding: var(--spacing-md) 0;
+}
+
+.summaryLine {
+  margin: 0 0 var(--spacing-sm) 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--spacing-md);
+  margin: 0;
+}
+
+.summaryItem {
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.summaryKey {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary);
+  margin: 0 0 4px 0;
+}
+
+.summaryValue {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.summaryJson {
+  margin: 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

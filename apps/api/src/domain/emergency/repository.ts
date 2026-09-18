@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, notInArray, sql, db, alias } from "@digihostel/db";
+import { and, asc, desc, eq, gte, lte, inArray, notInArray, sql, db, alias } from "@digihostel/db";
 import {
   students,
   hostels,
@@ -201,6 +201,12 @@ export class DrizzleEmergencyRepository implements EmergencyRepository {
       conditions.push(inArray(securityIncidents.status, input.statuses));
     } else if (input.activeOnly) {
       conditions.push(notInArray(securityIncidents.status, ["resolved", "closed"]));
+    }
+    if (input.dateFrom) {
+      conditions.push(gte(securityIncidents.createdAt, new Date(input.dateFrom)));
+    }
+    if (input.dateTo) {
+      conditions.push(lte(securityIncidents.createdAt, new Date(input.dateTo)));
     }
     const condition = and(...conditions);
 
