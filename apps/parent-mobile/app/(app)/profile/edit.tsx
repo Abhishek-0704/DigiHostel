@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { AccessibilityInfo, ScrollView, StyleSheet, Text, View } from "react-native";
 import { PageContainer } from "@/src/components/layout/PageContainer";
 import { PageHeader } from "@/src/components/layout/PageHeader";
 import { TextField } from "@/src/components/ui/TextField";
@@ -40,6 +40,14 @@ export default function EditProfile() {
 
   const currentName = name ?? profile.name ?? "";
   const isUnchanged = currentName.trim() === (profile.name ?? "").trim();
+
+  // See src/components/ui/TextField.tsx's identical fix — `accessibilityRole="alert"`
+  // alone is not reliably announced by TalkBack/VoiceOver on this platform.
+  useEffect(() => {
+    if (updateError) {
+      AccessibilityInfo.announceForAccessibility(updateError.userMessage);
+    }
+  }, [updateError]);
 
   const handleSave = () => {
     setSaved(false);

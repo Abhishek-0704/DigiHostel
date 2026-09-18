@@ -1,0 +1,25 @@
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--spacing-md);
+  min-width: 120px;
+  flex: 1;
+}
+
+.value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}

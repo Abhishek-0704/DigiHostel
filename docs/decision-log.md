@@ -54,6 +54,63 @@ Verification/evidence: see `docs/adr/ADR-020-otp-delivery-mechanism.md` for the 
 
 ---
 
+## ADR-022 — Production Backup & Disaster Recovery Strategy
+
+Date: 2026-09-07 (proposed); 2026-09-08 (accepted)
+Status: ACCEPTED
+
+Context: F-04 (PRR Phase 13) found the SDD requires PITR unconditionally (Ch.12 §12.7, Ch.16 §16.7) alongside automated daily backups, but no numeric RPO, RTO, or PITR retention period was specified anywhere, and a 2026-09-07 governance review further found that no repository document (`CLAUDE.md`, `workflow.md`, `docs/adr/README.md`, `docs/decision-log.md`, `docs/implementation-baseline.md`) named who was authorized to supply those numbers or accept this ADR — a genuine, unfilled governance gap, not merely an un-exercised one.
+
+Decision: The Product Owner explicitly established themselves as the authority for these DR product decisions and supplied: RPO = 1 hour, RTO = 1–4 hours (a range), PITR retention = 7 days. Target production architecture is Hybrid + PITR — Supabase Pro-tier managed daily backups + PITR at the approved 7-day retention + continued, independent logical backups (`supabase/scripts/backup.mjs`) for off-platform, defense-in-depth coverage. A qualitative scale-up review trigger requires revisiting all of these (RPO, RTO, retention, backup/restore-test frequency, database size, WAL volume, user population, operational criticality, cost) when DigiHostel materially scales or its operational criticality changes — no numeric threshold was defined or invented for that trigger.
+
+Alternatives considered: managed daily backups alone (rejected — no off-platform copy, and doesn't satisfy the SDD's PITR requirement); PITR alone without independent logical backups (rejected — leaves live data and its only backup inside the same Supabase account); a 14-day or 28-day PITR retention tier (both technically available and costed — $200/mo and $400/mo respectively — but not selected; 7 days was the Product Owner's choice, not a cost-minimizing default this ADR inserted).
+
+Consequences: acceptance is a decision-authority/architecture-design milestone only — no production Supabase project exists, PITR has not been enabled anywhere, no backup scheduler or off-site storage has been built, and the approved RPO/RTO have not been operationally demonstrated by any restore drill performed so far. These remain real, tracked implementation/verification gaps, not resolved by this decision.
+
+Verification/evidence: see `docs/adr/ADR-022-production-backup-dr-strategy.md` for the full options analysis, the "Decision authority" before/after governance record, the "PITR Retention Tier Analysis" (7/14/28-day comparison), and the "Not Yet Implemented" list.
+
+---
+
+## ADR-023 — Reception Dashboard Web Framework
+
+Date: 2026-09-14
+Status: ACCEPTED
+
+Context: `docs/workspace-structure.md` and `docs/target-architecture.md` both explicitly deferred the Reception Dashboard's web framework choice. Prompt 0.2 (project scaffolding) required a concrete choice to proceed and explicitly pre-authorized Vite+React over Next.js.
+
+Decision: Vite + React + TypeScript SPA, client-side routed, deployed as a static build to Vercel.
+
+Alternatives considered: Next.js (App Router) — rejected, no SSR/SEO requirement to justify it; Remix — rejected, same reason plus no repo precedent.
+
+Consequences: new `apps/reception-dashboard` package; `packages/api-client-react`'s fetch mutator gained a backward-compatible `setApiBaseUrl()` override since it previously only read an Expo-specific env var; `apps/api`'s CORS must be opened for this app's origin (not yet done).
+
+Verification/evidence: see `docs/adr/ADR-023-reception-dashboard-web-framework.md`.
+
+---
+
+## ADR-024 — Reception Dashboard Staff Authentication Mechanism (Password + MFA)
+
+Date: 2026-09-14
+Status: ACCEPTED
+
+Context: Prompt 0.1 left the staff authentication mechanism open (`docs/reception-dashboard-architecture.md` §16). A later scaffolding pass supplied an explicit accepted requirement: Password + MFA for Reception Dashboard staff, a stricter posture than the Parent App's OTP flow (ADR-020), justified by the dashboard's higher-privilege administrative surface.
+
+Decision: Supabase Auth password sign-in (`signInWithPassword`) + mandatory Supabase Auth native TOTP MFA (`auth.mfa`). A session counts as authorized only once Supabase's own Authenticator Assurance Level reaches `aal2`. No custom TOTP implementation; no manually-stored secret anywhere in this repository's own schema.
+
+Alternatives considered: magic link (rejected — no natural password step to layer MFA onto, and not what was requested); institutional SSO (rejected — no evidence it exists or is planned); custom/manual TOTP (rejected — reimplements a solved problem and would require storing secrets this application has no business holding).
+
+Consequences: `apps/reception-dashboard`'s auth state architecture (`contexts/authStatus.ts`, `AuthContext.tsx`, `services/auth/mfaService.ts`, `routes/RequireAuth.tsx`) now models `"mfa_required"` as distinct from `"authenticated"`; no login/MFA UI was built (Phase 1/2's work); whether `apps/api` should also enforce `aal2` server-side remains an open implementation question, not decided by this ADR; a staff-provisioning flow (password issuance + MFA enrollment invitation) remains unbuilt.
+
+Verification/evidence: see `docs/adr/ADR-024-reception-dashboard-staff-authentication.md` for the full options analysis; the installed `@supabase/supabase-js@2.113.0`'s MFA API surface was verified directly against its own type declarations, not assumed from documentation memory.
+
+**Update (Prompt 3, RBAC & Authorization Framework)**: this ADR's own Consequences named backend AAL2 enforcement as an open implementation question. It is now implemented — `apps/api/src/lib/auth/guards.ts`'s `requireAal2()`, applied to `POST /leave-requests/:id/expire`, verified against a real local Supabase TOTP enroll+verify round-trip. Not a decision change — an implementation of the already-accepted mechanism, recorded here per this file's own convention of tracking what happened, not by editing the entry above. Staff provisioning and MFA recovery remain open, unaffected.
+
+**Update (Prompt 1, Authentication Infrastructure)**: real `authService.signIn` (password sign-in), administrative inactivity timeout (15 min idle / 2 min warning, INFERRED per SDD Ch.17's qualitative-only requirement, env-overridable), idempotent logout with sign-out-reason tracking, and staff authentication audit logging (new `POST /auth/staff/audit-events`, `apps/api/src/domain/auth/staffAuthAudit.ts`) are all now implemented. CORS (`apps/api/src/app.ts`) changed from a hard `origin: false` to an environment-driven allow-list (`CORS_ALLOWED_ORIGINS`), since a real browser client now exists — no production origin was invented; production still fails closed until configured. Re-verified the full AAL1-blocked/AAL2-permitted chain end-to-end a second time, this time against a real running `apps/api` process rather than only the in-process test harness, and confirmed the resulting audit rows directly in the database. Not a decision change. Staff provisioning and MFA recovery remain explicitly open — not resolved by this update.
+
+**Update (Prompt 2, Login Experience)**: the real login/MFA UI (`apps/reception-dashboard/src/pages/LoginPage.tsx` and `src/components/auth/*`) is now implemented, consuming ADR-024's mechanism and the Prompt 1 infrastructure unchanged — no new authentication mechanism, MFA protocol, or session model was introduced. Re-verified the full chain a third time, this time through the actual rendered UI in a browser (real local Supabase + a real running `apps/api`), including a genuine password→MFA-step-shown-automatically→real-TOTP-verify→AAL2→staff-authorization→dashboard-redirect round trip, both a wrong-password and a wrong-TOTP-code negative path with full UI recovery, and confirmation of the resulting audit rows in `audit_logs`. Not a decision change. Staff provisioning and MFA recovery remain explicitly open — not resolved by this update.
+
+---
+
 Initial known decisions:
 - Use pnpm as the workspace package manager.
 - Keep Supabase architecture.

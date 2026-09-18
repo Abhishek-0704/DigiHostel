@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { AccessibilityInfo, StyleSheet, Text, View } from "react-native";
 import { logger } from "../../services/logger/logger";
 
 interface ErrorBoundaryProps {
@@ -34,6 +34,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       message: error.message,
       componentStack: info.componentStack,
     });
+    // See TextField.tsx's identical fix — `accessibilityRole="alert"` alone
+    // is not reliably announced by TalkBack/VoiceOver on this platform. A
+    // class component has no effect hook, so this fires directly at the one
+    // moment the fallback UI is about to replace whatever the user was on.
+    AccessibilityInfo.announceForAccessibility("Something went wrong. Please restart the app.");
   }
 
   render() {

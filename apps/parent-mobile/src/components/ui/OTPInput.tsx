@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useRef } from "react";
+import { AccessibilityInfo, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useThemeContext } from "../../contexts/ThemeContext";
 
 export interface OTPInputProps {
@@ -44,6 +44,14 @@ export function OTPInput({
   const { theme } = useThemeContext();
   const inputRef = useRef<TextInput>(null);
   const hasError = Boolean(errorMessage);
+
+  // See TextField.tsx's identical fix — `accessibilityRole="alert"` alone
+  // is not reliably announced by TalkBack/VoiceOver on this platform.
+  useEffect(() => {
+    if (errorMessage) {
+      AccessibilityInfo.announceForAccessibility(errorMessage);
+    }
+  }, [errorMessage]);
 
   const handleChangeText = (text: string) => {
     const digitsOnly = text.replace(/[^0-9]/g, "").slice(0, length);

@@ -1,8 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { buildApp } from "../app.js";
 import { FakeEligibilityRepository } from "../domain/auth/__fixtures__/fake-eligibility-repository.js";
 import { FakeOtpSender } from "../domain/auth/__fixtures__/fake-otp-sender.js";
+import { FakeStaffRepository } from "../domain/staff/__fixtures__/fake-repository.js";
 import { InMemoryOtpChallengeStore } from "../domain/auth/otpChallengeStore.js";
+import { createJwtVerifier } from "../lib/auth/jwt.js";
+import { generateTestKeyPair, signTestJwt } from "../lib/auth/__fixtures__/test-jwt.js";
+import { FakeAuthDbPort } from "../lib/auth/__fixtures__/fake-db-port.js";
+import type { KeyLike } from "jose";
 
 const SESSION = { accessToken: "access-tok", refreshToken: "refresh-tok" };
 
@@ -23,6 +28,7 @@ async function buildTestApp() {
       },
     },
     otpAuthOverrides: { eligibilityRepository, challengeStore, otpSender },
+    staffOverrides: { staffRepository: new FakeStaffRepository() },
   });
   return { app, eligibilityRepository, otpSender };
 }
@@ -261,6 +267,122 @@ describe("POST /api/v1/auth/otp/verify (end-to-end through the real app)", () =>
     });
 
     expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+});
+
+// Reception Dashboard Prompt 1 (Authentication Infrastructure).
+describe("POST /api/v1/auth/staff/audit-events", () => {
+  let privateKey: KeyLike;
+  let publicKey: KeyLike;
+
+  beforeAll(async () => {
+    const pair = await generateTestKeyPair();
+    privateKey = pair.privateKey;
+    publicKey = pair.publicKey;
+  });
+
+  const RECEPTION_AUTH = "reception-audit-auth-user";
+  const PARENT_AUTH = "parent-audit-auth-user";
+
+  async function buildAuditTestApp() {
+    const authDb = new FakeAuthDbPort()
+      .addStaff(RECEPTION_AUTH, "reception-audit-1", "reception_warden", "hostel-a")
+      .addParent(PARENT_AUTH, "parent-audit-1");
+
+    const jwtVerifier = createJwtVerifier(
+      { supabaseUrl: "http://127.0.0.1:9999" },
+      async () => publicKey,
+    );
+
+    const app = await buildApp({
+      authOverrides: { jwtVerifier, authDbPort: authDb },
+      otpAuthOverrides: {
+        eligibilityRepository: new FakeEligibilityRepository(),
+        challengeStore: new InMemoryOtpChallengeStore(),
+        otpSender: new FakeOtpSender(),
+      },
+      staffOverrides: { staffRepository: new FakeStaffRepository() },
+    });
+    return { app };
+  }
+
+  async function tokenFor(sub: string) {
+    return signTestJwt({ sub, privateKey });
+  }
+
+  it("unauthenticated: 401", async () => {
+    const { app } = await buildAuditTestApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/staff/audit-events",
+      payload: { event: "sign_in_success" },
+    });
+    expect(res.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("a non-staff caller (parent): 403 — this endpoint only records STAFF auth events", async () => {
+    const { app } = await buildAuditTestApp();
+    const token = await tokenFor(PARENT_AUTH);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/staff/audit-events",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { event: "sign_in_success" },
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it("an unrecognized event value: 400, never silently accepted", async () => {
+    const { app } = await buildAuditTestApp();
+    const token = await tokenFor(RECEPTION_AUTH);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/staff/audit-events",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { event: "staff_deleted_the_database" },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("a genuine staff caller reporting sign_in_success: 204, no body", async () => {
+    const { app } = await buildAuditTestApp();
+    const token = await tokenFor(RECEPTION_AUTH);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/staff/audit-events",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { event: "sign_in_success" },
+    });
+    // No real database is wired in this test app (no dbOverride for
+    // staffAuthAudit's own db.insert call) — the write itself is expected
+    // to fail and be swallowed (recordStaffAuthEvent's own fire-and-forget
+    // try/catch, mirroring device/service.ts). What this test actually
+    // proves is the ROUTE-LEVEL contract: a genuine staff caller with a
+    // valid event reaches 204, not 403/400 — the write path itself is
+    // covered by the real-Postgres integration suite
+    // (apps/api/src/domain/*.integration.test.ts convention) rather than
+    // asserted here.
+    expect(res.statusCode).toBe(204);
+    expect(res.body).toBe("");
+    await app.close();
+  });
+
+  it("every declared event value is accepted for a genuine staff caller", async () => {
+    const { app } = await buildAuditTestApp();
+    const token = await tokenFor(RECEPTION_AUTH);
+    for (const event of ["sign_in_success", "mfa_success", "mfa_failure", "sign_out"]) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/staff/audit-events",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { event },
+      });
+      expect(res.statusCode).toBe(204);
+    }
     await app.close();
   });
 });

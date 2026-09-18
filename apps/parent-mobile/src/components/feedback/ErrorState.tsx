@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useEffect } from "react";
+import { AccessibilityInfo, StyleSheet, Text, View } from "react-native";
 import { useThemeContext } from "../../contexts/ThemeContext";
 import { Button } from "../ui/Button";
 import type { AppError } from "../../types/errors";
@@ -13,6 +14,13 @@ export interface ErrorStateProps {
  * discipline on the client side. */
 export function ErrorState({ error, onRetry }: ErrorStateProps) {
   const { theme } = useThemeContext();
+
+  // See TextField.tsx's identical fix — `accessibilityRole="alert"` alone
+  // is not reliably announced by TalkBack/VoiceOver on this platform.
+  useEffect(() => {
+    AccessibilityInfo.announceForAccessibility(error.userMessage);
+  }, [error.userMessage]);
+
   return (
     <View
       style={[styles.container, { padding: theme.spacing.xl }]}

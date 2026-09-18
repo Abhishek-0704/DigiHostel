@@ -20,13 +20,16 @@ Legend: ✅ allowed (with condition noted), ❌ denied, — not applicable to th
 
 ## `parents`
 
+**QG-03 remediation, Finding F-QG03-01 (CRITICAL, CLOSED).** Prior to `supabase/migrations/0019_fqg0301_fqg0302_hostel_scope_remediation.sql`, `parents_all_hostel_admin` used a bare `current_staff_role() = 'hostel_admin'` role check — present, unfixed, since the very first migration (`0000_cute_korvac.sql`) — with no join against which hostel the parent's own linked students actually belong to. The independent QG-03 review live-reproduced this: a Utkal-scoped `hostel_admin` read every parent record system-wide (including a Kalinga parent's full name and phone number) and successfully overwrote that Kalinga parent's `phone_number` via direct PostgREST — the write persisted, independently re-confirmed via a service-role re-read. The table below reflects the row that PREVIOUSLY read "hostel_admin / super_admin | ✅ all | ✅ | ✅ | ❌ | role claim" — that documentation was itself part of the problem: it described the bug as though it were the intended, correct behavior. It has been corrected below to describe the now-remediated, hostel-scoped behavior. See `docs/qg03-remediation.md` for the full finding/evidence/fix record.
+
 | Actor | SELECT | INSERT | UPDATE | DELETE | Authorization basis |
 |---|---|---|---|---|---|
 | anonymous | ❌ | ❌ | ❌ | ❌ | |
 | parent/guardian (self) | ✅ own row | ❌ | ✅ own row | ❌ | `auth_user_id = auth.uid()` |
 | student | ❌ | ❌ | ❌ | ❌ | students never read parent profile rows directly (Fastify surfaces only what's needed, e.g. escalation-chain display, via a scoped endpoint) |
-| reception / library_incharge | ❌ | ❌ | ❌ | ❌ | no operational need for direct table access |
-| hostel_admin / super_admin | ✅ all | ✅ | ✅ | ❌ | role claim |
+| reception / library_incharge | ❌ | ❌ | ❌ | ❌ | no operational need for direct table access — reception reads guardian contact only via the existing, hostel-scoped `GET /students/{rollNumber}` endpoint (Fastify service-role, bypasses this table's RLS by design), consumed by both the Student Operations Center (Prompt 8) and the Health Operations Center's Case Detail page — never a duplicated query path |
+| hostel_admin | ✅ **only parents linked (via `parent_student_relationships`) to at least one student in the caller's own hostel** | ❌ **no INSERT policy at all** (no legitimate direct-insert use case; a brand-new parent has no relationship yet to scope against — see migration's own comment) | ✅ same scope as SELECT | ✅ same scope as SELECT | `is_hostel_admin_for_parent(parents.id)` — SECURITY DEFINER, joins `parent_student_relationships` → `students` → `hostel_id`. A parent linked to students in more than one hostel is correctly visible to EACH of those hostels' admins (mirrors `parent_student_relationships`' own pre-existing `psr_all_hostel_admin` behavior for the identical case) |
+| super_admin | ✅ all | ✅ | ✅ | ❌ | role claim (unchanged by this fix) |
 
 ## `staff`
 
@@ -39,14 +42,16 @@ Legend: ✅ allowed (with condition noted), ❌ denied, — not applicable to th
 
 ## `parent_student_relationships`
 
+**F-QG03-09 remediation (CRITICAL — independent QG-03 re-verification, `supabase/migrations/0020_fqg0309_psr_hostel_admin_write_lockdown.sql`).** `hostel_admin`'s row below previously read INSERT ✅ / UPDATE ✅ / DELETE ❌ (a `for: "all"` policy, `psr_all_hostel_admin`, scoped only by `students.hostel_id`, no validation of the parent side at all — this document's own prior DELETE ❌ entry was itself already inaccurate, since `for: "all"` covers DELETE too). The independent QG-03 re-verification board live-reproduced the resulting bypass: a Kalinga `hostel_admin`, given only an unrelated parent's UUID, fabricated a `parent_student_relationships` row linking that parent to one of the admin's own students, then used the fabricated row to read AND write that parent's PII through the already-scoped `parents` policies — fully reinstating the cross-hostel PII exposure F-QG03-01 was remediated to eliminate. Exhaustive repository search found no legitimate product workflow (Fastify, frontend, or documented onboarding) that writes to this table at all — every write anywhere in the codebase is either `supabase/seed.sql` or test-fixture setup, both via the service-role connection (unaffected by RLS, since it bypasses RLS entirely). `hostel_admin`'s write authority (INSERT/UPDATE/DELETE) was therefore removed entirely, retaining only the pre-existing, correctly-scoped SELECT (renamed `psr_select_hostel_admin`) — mirroring the identical "no legitimate workflow = no policy" precedent the 0019 migration already established for `parents` INSERT. Multi-hostel-parent semantics are unaffected (SELECT, the only remaining grant, was not changed).
+
 | Actor | SELECT | INSERT | UPDATE | DELETE | Authorization basis |
 |---|---|---|---|---|---|
 | anonymous | ❌ | ❌ | ❌ | ❌ | |
 | student | ✅ own rows (which parents are linked to me) | ❌ | ❌ | ❌ | `student_id = <caller's students.id>` |
 | parent/guardian | ✅ own rows | ❌ | ❌ | ❌ | `parent_id = <caller's parents.id>` |
 | reception / library_incharge | ❌ | ❌ | ❌ | ❌ | not needed operationally |
-| hostel_admin | ✅ own-hostel students' relationships | ✅ | ✅ | ❌ | joined through `students.hostel_id` |
-| super_admin | ✅ all | ✅ | ✅ | ❌ | role claim |
+| hostel_admin | ✅ own-hostel students' relationships | ❌ **no INSERT policy at all** (F-QG03-09 — no legitimate direct-write workflow exists; see note above) | ❌ **no UPDATE policy at all** (same reasoning — also closes the ownership-mutation vector, e.g. re-pointing `parent_id`/`student_id`) | ❌ **no DELETE policy at all** (same reasoning) | `is_hostel_admin_for_student(student_id)` — SELECT only |
+| super_admin | ✅ all | ✅ | ✅ | ✅ | role claim — unchanged, unscoped by design, out of F-QG03-09's scope |
 
 ## `hostels`, `rooms`
 
@@ -73,10 +78,12 @@ Legend: ✅ allowed (with condition noted), ❌ denied, — not applicable to th
 | anonymous | ❌ | ❌ | ❌ | ❌ | |
 | student (self) | ✅ own | ✅ own (creates the request) | ❌ (status transitions happen via `leave_approval_events` + Fastify, not direct student edits) | ❌ | `student_id = <caller's students.id>` |
 | parent/guardian | ✅ linked students' | ❌ | ✅ **status only**, and only when linked via `parent_student_relationships` — this row's original text ("the party matching the current escalation step") predated the actual implementation and was wrong; corrected, and now the **formally accepted design** per [ADR-016](adr/ADR-016-leave-escalation-approval-authority.md) (ACCEPTED, Model C — escalation controls notification priority only). Any linked parent/guardian — regardless of `relationship_type` or `escalation_order` — may decide a request in any decidable status. Neither RLS (`leave_requests_update_linked_parent`) nor Fastify (`LeaveService.decide()`/`DrizzleLeaveRepository.decide()`) restricts this further. | ❌ | join through `parent_student_relationships` |
-| reception | ✅ own-hostel students' | ✅ (manual-fallback creation) | ✅ (`leave_requests_all_reception`, `for: "all"` — **the actual policy grants any update to own-hostel students' rows, not restricted to `manual_verification` at the SQL level**; this column's "manual_verification path only" phrasing is the *intended business use*, primarily resolving `manual_verification` → `approved`/`rejected`/`expired`, per [ADR-019](adr/ADR-019-leave-escalation-state-sequencing-correction.md) — `expired` specifically is reached only via this explicit staff action, never an automatic timer) | ❌ | via `students.hostel_id` |
+| reception | ✅ own-hostel students' | ✅ (manual-fallback creation) | ✅ own-hostel students', **but only rows whose CURRENT status is `manual_verification`** (`leave_requests_update_reception`, `for: "update"`) | ❌ | via `students.hostel_id` (SELECT/INSERT/DELETE); `students.hostel_id` **and** `status = 'manual_verification'` (UPDATE) |
 | library_incharge | ❌ | ❌ | ❌ | ❌ | not relevant to library operations |
-| hostel_admin | ✅ own hostel | ❌ | ✅ own hostel | ❌ | via `students.hostel_id` |
+| hostel_admin | ✅ own hostel | ❌ | ✅ own hostel, **but only rows whose CURRENT status is `manual_verification`** (`leave_requests_update_hostel_admin`) | ❌ | via `students.hostel_id` (SELECT/DELETE); `students.hostel_id` **and** `status = 'manual_verification'` (UPDATE) |
 | super_admin | ✅ all | ❌ | ✅ all | ❌ | role claim |
+
+**F-QG02-01 remediation (QG-02 Leave Authorization Workflow Review, `supabase/migrations/0012_fqg0201_exit_authorization_workflow_state_gate.sql`).** Until this migration, `leave_requests_all_reception`/`leave_requests_all_hostel_admin` were single `for: "all"` policies applying the SAME hostel-scope-only USING/WITH CHECK to SELECT, INSERT, UPDATE, and DELETE alike — the "manual_verification path only" phrasing above was **aspirational, not enforced**: any own-hostel row could be directly UPDATEd to any status via PostgREST, bypassing `DrizzleLeaveRepository.decide()`/`startParentApproval()` entirely, with zero `leave_approval_events`/`audit_logs` row written. Live-reproduced: a real password-authenticated `reception1@example.test` session force-approved a `pending` leave request via a direct PostgREST PATCH. Each `for: "all"` policy was split into four per-operation policies; only the UPDATE policy's USING clause changed in substance, adding `status = 'manual_verification'` — SELECT/INSERT/DELETE are unchanged (confirmed no legitimate frontend code anywhere writes to `leave_requests` directly via a Supabase client; Fastify's own writes use its service-role connection, which bypasses RLS entirely and is therefore unaffected by this narrowing). Covered by a new pgTAP assertion in `supabase/tests/database/06_ownership_writes.sql`.
 
 ## `leave_approval_events` (immutable)
 
@@ -109,22 +116,29 @@ Legend: ✅ allowed (with condition noted), ❌ denied, — not applicable to th
 
 ## `library_passes`, `journey_events`
 
+**This section describes the design intent (`docs/database-schema-design.md`); this whole domain remains DORMANT — zero Fastify routes read or write any of these three tables (confirmed by repository search), so none of this is reachable through the certified Reception Dashboard application today.** The `reception`/`library_incharge` rows below for `journey_events` reflect the RLS as it actually is after the QG-03 remediation (see the note under that row) — the `hostel_admin`/`parent`/`student` rows are carried over from the original design documentation and were not independently re-verified against the live SQL as part of this remediation (out of its scope — see `docs/qg03-remediation.md` F-QG03-02).
+
 | Actor | SELECT | INSERT | UPDATE | DELETE | Authorization basis |
 |---|---|---|---|---|---|
 | anonymous | ❌ | ❌ | ❌ | ❌ | |
 | student (self) | ✅ own | ✅ own (`library_passes` creation) | ❌ | ❌ | `student_id = <caller's students.id>` |
 | parent/guardian | ✅ linked students' (visibility only — SDD gives parents read access to library status, not write) | ❌ | ❌ | ❌ | join through `parent_student_relationships` |
-| reception | ✅ own hostel | ✅ (`journey_events` at hostel checkpoints) | ✅ (`library_passes.status`/`is_overdue`) | ❌ | via `students.hostel_id` |
-| library_incharge | ✅ all | ✅ (`journey_events` at library checkpoints) | ✅ (`library_passes.status`) | ❌ | role claim — not hostel-scoped |
-| hostel_admin / super_admin | ✅ | ❌ | ✅ | ❌ | role claim |
+| reception | ✅ `library_passes`: own hostel (pre-existing, correctly scoped since inception). `journey_events`: own hostel **(QG-03 remediation, F-QG03-02 — see below; previously unscoped)** | ✅ `journey_events` at hostel checkpoints, own hostel only **(F-QG03-02)** | ✅ `library_passes.status`/`is_overdue`, own hostel | ❌ | `library_passes`: via `students.hostel_id` directly. `journey_events`: via `is_reception_for_library_pass(journey_events.library_pass_id)` — SECURITY DEFINER, joins `library_passes` → `students` → `hostel_id` |
+| library_incharge | ✅ all | ✅ (`journey_events` at library checkpoints) | ✅ (`library_passes.status`) | ❌ | role claim — intentionally not hostel-scoped (unchanged) |
+| hostel_admin / super_admin | ✅ | ❌ | ✅ | ❌ | role claim — not independently re-verified this remediation; see note above |
+
+**QG-03 remediation, Finding F-QG03-02 (MAJOR, CLOSED).** Prior to `supabase/migrations/0019_fqg0301_fqg0302_hostel_scope_remediation.sql`, `journey_events_select_reception_library` and `journey_events_insert_reception_library` (present, unfixed, since `0000_cute_korvac.sql`) granted `reception_warden` access via a bare `current_staff_role() = 'reception_warden' or current_staff_role() = 'library_incharge'` check — no hostel join for reception at all, unlike this same schema file's own `library_passes_all_reception` policy. Not currently exploitable through the certified application (no route uses this table), but an unsafe pre-provisioned direct-PostgREST boundary. Split into a reception policy (scoped via the new `is_reception_for_library_pass` helper) and an unchanged, global library_incharge policy. See `docs/qg03-remediation.md` for the full record.
 
 ## `qr_sessions`
+
+**QG-03 remediation, Finding F-QG03-02 (MAJOR, CLOSED) — same finding/fix as `journey_events` above.** `qr_sessions_all_reception_library` (unfixed since `0000_cute_korvac.sql`) granted `reception_warden` access via the same bare, unscoped role check. Split into `qr_sessions_all_reception` (scoped via `is_reception_for_library_pass`) and `qr_sessions_all_library_incharge` (unchanged, global).
 
 | Actor | SELECT | INSERT | UPDATE | DELETE | Authorization basis |
 |---|---|---|---|---|---|
 | anonymous | ❌ | ❌ | ❌ | ❌ | |
 | student (self) | ✅ own (to display the active QR) | ❌ (Fastify service-role generates) | ❌ | ❌ | via `library_passes.student_id` |
-| reception / library_incharge | ✅ (to validate a scan) | ❌ | ✅ (`used_at`, `used_by_staff_id`) on scan | ❌ | operational — checkpoint-scanning role |
+| reception | ✅ own hostel only **(previously unscoped — F-QG03-02)** | ✅ own hostel only | ✅ (`used_at`, `used_by_staff_id`) on scan, own hostel only | ✅ own hostel only | `is_reception_for_library_pass(qr_sessions.library_pass_id)` |
+| library_incharge | ✅ all | ✅ | ✅ | ✅ | role claim — intentionally not hostel-scoped (unchanged) |
 | everyone else | ❌ | ❌ | ❌ | ❌ | tightly scoped — this is the highest-replay-risk table in the schema |
 
 ## `notifications`
@@ -145,15 +159,67 @@ Legend: ✅ allowed (with condition noted), ❌ denied, — not applicable to th
 
 ## `security_incidents`
 
+Phase 4, Prompt 10 (Emergency Operations Center) extended this table
+additively — 8 new `incident_type` values (medical/personal_safety/fire/
+security_threat/violence/infrastructure/harassment/other), 3 new `status`
+values (acknowledged/in_progress/closed), a new `severity` column, and
+`description`/`assigned_staff_id`/`closed_at` columns (all nullable —
+migrations `0016`/`0017_emergency_operations_center*.sql`). The table's
+ORIGINAL two `incident_type` values (`missed_checkpoint`/`manual_flag`)
+belong to the separate, still-unbuilt Digital Library Pass
+checkpoint-monitoring domain and are unaffected.
+
 | Actor | SELECT | INSERT | UPDATE | DELETE | Authorization basis |
 |---|---|---|---|---|---|
 | anonymous | ❌ | ❌ | ❌ | ❌ | |
 | student (self) | ✅ own, **excluding raw geolocation columns** (column-level restriction via a view or column privileges, not RLS row-filtering) | ❌ | ❌ | ❌ | `student_id = <caller's students.id>` |
 | parent/guardian | ✅ linked students', same column restriction | ❌ | ❌ | ❌ | join through `parent_student_relationships` |
-| reception | ✅ own-hostel only, **including geolocation while incident is open** (operational necessity) | ✅ own-hostel (`missed_checkpoint` auto-trigger path via Fastify) | ✅ own-hostel (`status` transitions) | ❌ | role claim + hostel scope (`is_reception_for_student`, F-05A remediation — was role claim alone (combined with library_incharge in one policy), a cross-hostel IDOR; see `supabase/tests/database/14_f05a_security_incidents_reception_scope.sql`) |
-| library_incharge | ✅ all, **including geolocation while incident is open** (operational necessity) | ✅ (`missed_checkpoint` auto-trigger path via Fastify) | ✅ (`status` transitions) | ❌ | role claim only — intentionally global, unaffected by F-05A |
-| hostel_admin | ✅ own-hostel students' incidents only | ✅ own-hostel | ✅ own-hostel | ❌ | role claim + hostel scope (`is_hostel_admin_for_student`, F-05 remediation — was role claim alone, a cross-hostel IDOR; see `supabase/tests/database/13_f05_security_incidents_hostel_scope.sql`) |
+| reception | ✅ own-hostel only, **including geolocation while incident is open** (operational necessity) | ✅ own-hostel, any `incident_type` | ✅ own-hostel (`status`/`assigned_staff_id` transitions) | ❌ | role claim + hostel scope (`is_reception_for_student`) + (Prompt 10) a non-null `assigned_staff_id` must equal the caller's own resolved staff id — forged-actor defense, same shape as `movements_insert_staff` |
+| library_incharge | ✅ **only `missed_checkpoint`/`manual_flag` rows** (narrowed, Prompt 10) | ✅ **only `missed_checkpoint`/`manual_flag`** (narrowed, Prompt 10) | ✅ **only `missed_checkpoint`/`manual_flag`** (narrowed, Prompt 10) | ❌ | role claim only, GLOBAL (unaffected by F-05A) for the two original types; explicitly EXCLUDED (Prompt 10) from the 8 new emergency categories — no product reason for library staff to manage a medical/fire/violence incident |
+| hostel_admin | ✅ own-hostel students' incidents only | ✅ own-hostel, any `incident_type` | ✅ own-hostel (`status`/`assigned_staff_id` transitions) | ❌ | role claim + hostel scope (`is_hostel_admin_for_student`) + (Prompt 10) same forged-`assigned_staff_id` defense as reception |
 | super_admin | ✅ full access | ✅ | ✅ | ❌ | role claim |
+
+### `security_incident_events` (new, Prompt 10 — immutable operational timeline)
+
+Mirrors `leave_approval_events`'s established shape exactly: one immutable row per lifecycle transition (`created`/`acknowledged`/`response_started`/`note_added`/`resolved`/`closed`), RLS-scoped through the parent `security_incidents` row's own student/hostel relationship. No UPDATE/DELETE policy for any role.
+
+| Actor | SELECT | INSERT | Authorization basis |
+|---|---|---|---|
+| anonymous | ❌ | ❌ | |
+| student (self) | ✅ own incident's timeline | ❌ | join through `security_incidents.student_id` |
+| parent/guardian | ✅ linked students' timeline | ❌ | join through `security_incidents` → `parent_student_relationships` |
+| reception / hostel_admin | ✅ own-hostel | ✅ own-hostel, `actor_staff_id` pinned to caller's own resolved staff id (forged-actor defense) | join through `security_incidents`, same `is_reception_for_student`/`is_hostel_admin_for_student` helpers |
+| library_incharge | ❌ (no policy at all — this timeline belongs entirely to the EOC domain) | ❌ | |
+| super_admin | ✅ full access | ✅ | role claim |
+
+## `health_cases` (new, Phase 4, Prompt 11 — Health Operations Center)
+
+A NEW table, deliberately NOT an extension of `security_incidents` — see `apps/reception-dashboard/docs/health-operations-center.md` §1 for the full reconnaissance/reasoning (the EOC's 5-state lifecycle and its `medical` incident_type already occupy that table for a different, acute domain; sharing one status column between two unrelated state machines was judged unsound). `severity` reuses `security_incident_severity` directly — no duplicated enum. Migration `0018_health_operations_center.sql`.
+
+**Update (Prompt 11 closure pass — Medical History condition)**: `GET /health-cases` gained an additive, optional `studentId` query filter, applied AFTER the same hostel-scope check every row below already describes — never a new authorization path, never a table-level RLS change. This is what the Case Detail page's read-only "Medical History" section uses to list a student's own past cases (`apps/reception-dashboard/docs/health-operations-center.md` §16.3).
+
+| Actor | SELECT | INSERT | UPDATE | DELETE | Authorization basis |
+|---|---|---|---|---|---|
+| anonymous | ❌ | ❌ | ❌ | ❌ | |
+| student (self) | ✅ own | ❌ | ❌ | ❌ | `student_id = <caller's students.id>` |
+| parent/guardian | ✅ linked students' | ❌ | ❌ | ❌ | join through `parent_student_relationships` |
+| reception | ✅ own-hostel only | ✅ own-hostel | ✅ own-hostel (`status`/`assigned_staff_id` transitions) | ❌ | role claim + hostel scope (`is_reception_for_student`) + a non-null `assigned_staff_id` must equal the caller's own resolved staff id (forged-actor defense, same shape as `security_incidents_all_reception`) |
+| library_incharge | ❌ (no policy at all — not narrowed, as with `security_incidents`; simply absent, since this role has no product reason to touch a medical case) | ❌ | ❌ | ❌ | |
+| hostel_admin | ✅ own-hostel students' cases only | ✅ own-hostel | ✅ own-hostel (`status`/`assigned_staff_id` transitions) | ❌ | role claim + hostel scope (`is_hostel_admin_for_student`) + same forged-`assigned_staff_id` defense as reception |
+| super_admin | ✅ full access | ✅ | ✅ | ❌ | role claim |
+
+### `health_case_events` (new, Prompt 11 — immutable operational timeline)
+
+Mirrors `security_incident_events`'s established shape exactly: one immutable row per lifecycle transition (`created`/`acknowledged`/`monitoring_started`/`awaiting_update`/`update_received`/`note_added`/`resolved`/`discharge_recorded`/`closed`/`cancelled`), RLS-scoped through the parent `health_cases` row's own student/hostel relationship. No UPDATE/DELETE policy for any role.
+
+| Actor | SELECT | INSERT | Authorization basis |
+|---|---|---|---|
+| anonymous | ❌ | ❌ | |
+| student (self) | ✅ own case's timeline | ❌ | join through `health_cases.student_id` |
+| parent/guardian | ✅ linked students' timeline | ❌ | join through `health_cases` → `parent_student_relationships` |
+| reception / hostel_admin | ✅ own-hostel | ✅ own-hostel, `actor_staff_id` pinned to caller's own resolved staff id (forged-actor defense) | join through `health_cases`, same `is_reception_for_student`/`is_hostel_admin_for_student` helpers |
+| library_incharge | ❌ (no policy at all) | ❌ | |
+| super_admin | ✅ full access | ✅ | role claim |
 
 ---
 

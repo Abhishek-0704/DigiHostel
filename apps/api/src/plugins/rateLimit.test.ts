@@ -5,6 +5,7 @@ import { generateTestKeyPair, signTestJwt } from "../lib/auth/__fixtures__/test-
 import { createJwtVerifier } from "../lib/auth/jwt.js";
 import { FakeLeaveRepository } from "../domain/leave/__fixtures__/fake-repository.js";
 import { FakeOtpSender } from "../domain/auth/__fixtures__/fake-otp-sender.js";
+import { FakeStaffRepository } from "../domain/staff/__fixtures__/fake-repository.js";
 import type { LeaveRequestStatus, LeaveRequestView } from "../domain/leave/types.js";
 import type { BiometricFreshnessGate } from "../lib/auth/security-gates.js";
 
@@ -20,7 +21,14 @@ const freshGate: BiometricFreshnessGate = {
   checkFreshness: async () => ({ fresh: true, confirmedAt: new Date() }),
 };
 
-function makeLeaveRequest(id: string, status: LeaveRequestStatus = "pending"): LeaveRequestView {
+// Default "father_notified", not "pending" — Reception-Initiated Parent
+// Approval correction: a `pending` request is no longer parent-decidable, and
+// this file's approve-route rate-limit tests below need a real 200 from
+// decide() to prove the tier applies independently of read-route traffic.
+function makeLeaveRequest(
+  id: string,
+  status: LeaveRequestStatus = "father_notified",
+): LeaveRequestView {
   return {
     id,
     studentId: "student-1",
@@ -50,6 +58,7 @@ async function buildTestApp(overrides: Parameters<typeof buildApp>[0] = {}) {
     authOverrides: { jwtVerifier, authDbPort: authDb },
     leaveOverrides: { leaveRepository: leaveRepo, biometricGate: freshGate },
     otpAuthOverrides: { otpSender: new FakeOtpSender() },
+    staffOverrides: { staffRepository: new FakeStaffRepository() },
     ...overrides,
   });
   const parentToken = await signTestJwt({ sub: "parent-auth", privateKey: pair.privateKey });

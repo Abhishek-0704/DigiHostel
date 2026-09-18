@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { buildApp } from "../app.js";
 import { FakeOtpSender } from "../domain/auth/__fixtures__/fake-otp-sender.js";
+import { FakeStaffRepository } from "../domain/staff/__fixtures__/fake-repository.js";
 
 // /healthz and /readyz never invoke app.authenticate, so this fake verifier
 // is never called — it exists only so buildApp() can construct without a
@@ -17,6 +18,7 @@ async function buildTestApp() {
       },
     },
     otpAuthOverrides: { otpSender: new FakeOtpSender() },
+    staffOverrides: { staffRepository: new FakeStaffRepository() },
   });
 }
 
@@ -101,6 +103,7 @@ describe("GET /api/v1/readyz — unreachable database (mocked)", () => {
         },
       },
       otpAuthOverrides: { otpSender: new FakeOtpSender() },
+      staffOverrides: { staffRepository: new FakeStaffRepository() },
     });
 
     const response = await app.inject({ method: "GET", url: "/api/v1/readyz" });

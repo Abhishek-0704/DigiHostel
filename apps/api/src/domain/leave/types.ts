@@ -24,6 +24,29 @@ export const DECIDABLE_STATUSES = [
 
 export type DecidableStatus = (typeof DECIDABLE_STATUSES)[number];
 
+/**
+ * The statuses a PARENT may actually decide (approve/reject) — Reception-
+ * Initiated Parent Approval correction. Deliberately narrower than
+ * `DECIDABLE_STATUSES`: `pending` is excluded because, before this
+ * correction, a parent could call `decide()` successfully on a `pending`
+ * request — one the student had only just created, that Reception had never
+ * reviewed or explicitly sent for parent approval — since `pending` sat in
+ * the same set used for both "is this a legal escalation stage" (still true;
+ * `DECIDABLE_STATUSES`/`NEXT_ESCALATION_STAGE` keep it) and "can a parent act
+ * on it right now" (no longer true for `pending`). The Parent App's own
+ * presentation layer had the identical gap independently
+ * (`apps/parent-mobile/src/features/leave-approval/leavePresentationMapper.ts`'s
+ * `AWAITING_RESPONSE_STATUSES` included `pending` too — fixed in the same
+ * corrective pass, no longer showing a `pending` request as actionable).
+ * `father_notified` onward is unaffected: once Reception has explicitly
+ * started parent approval (`startParentApproval()` below), the request
+ * transitions straight to `father_notified`, which remains fully
+ * parent-decidable exactly as before.
+ */
+export const PARENT_DECIDABLE_STATUSES = DECIDABLE_STATUSES.filter(
+  (status) => status !== "pending",
+);
+
 /** The escalation chain's automated next hop for each stage (ADR-017,
  * corrected by ADR-019 §1: guardian_notified -> in_app_call ->
  * manual_verification, two hops, not one). Derived directly from
@@ -90,6 +113,36 @@ export interface CreateLeaveRequestInput {
   endDate: string;
 }
 
+/** Staff-only queue read (Reception Dashboard, Phase 3 Prompt 7A).
+ * `staffRole` decides scoping exactly like MarkExpiredInput does:
+ * reception_warden/hostel_admin are hostel-scoped, super_admin is not
+ * (mirrors leave_requests_all_reception/_all_hostel_admin/_all_super_admin's
+ * own RLS shape — library_incharge is deliberately excluded, no RLS grant on
+ * leave_requests for that role). */
+export interface StaffLeaveQueueInput {
+  staffId: string;
+  staffRole: "reception_warden" | "hostel_admin" | "super_admin";
+}
+
+/** A leave_requests row enriched with the minimum student/hostel/room
+ * context the Reception Dashboard's queue table needs (§12 of Prompt 7A) —
+ * never a parent identity/contact field, and never any SAP/mentor-approval
+ * field (no such data source exists in this repository — see
+ * apps/reception-dashboard/docs/leave-queue.md's SAP Integration Summary).
+ * `studentHostelName`/`studentRoomNumber` come from the real `hostels`/
+ * `rooms` reference tables (packages/db/src/schema/hostel.ts) — genuinely
+ * REAL data, not a placeholder, since both tables exist and are readable by
+ * any authenticated staff member (`hostels_select_authenticated`/
+ * `rooms_select_authenticated`). */
+export interface StaffLeaveQueueItemView extends LeaveRequestView {
+  studentRollNumber: string;
+  studentFullName: string;
+  studentHostelId: string | null;
+  studentHostelName: string | null;
+  studentRoomId: string | null;
+  studentRoomNumber: string | null;
+}
+
 /** `leave_approval_events.event_type` (packages/db/src/schema/enums.ts,
  * `approval_event_type`) — the complete, real vocabulary. No other event
  * type exists; nothing beyond this list may ever be surfaced (ADR-015). */
@@ -114,4 +167,38 @@ export interface LeaveApprovalEventView {
   response: ApprovalEventResponse | null;
   biometricConfirmed: boolean;
   occurredAt: string;
+}
+
+/**
+ * Phase 3, Prompt 7C — Student Verification & Exit Authorization. Staff-only
+ * input to `authorizeExit()`. `identityConfirmed` is a staff attestation
+ * (the server cannot independently verify a physical identity match), same
+ * category of value as `biometricAssertion`/`biometricConfirmed` elsewhere
+ * in this domain — required `true` at every layer (route validation, this
+ * type, and the database RLS `withCheck`, defense-in-depth); a `false`/
+ * absent value is rejected before ever reaching the repository. `staffRole`
+ * drives hostel scoping exactly like `MarkExpiredInput`/`StaffLeaveQueueInput`.
+ */
+export interface AuthorizeExitInput {
+  leaveRequestId: string;
+  actingStaffId: string;
+  actingStaffRole: "reception_warden" | "hostel_admin" | "super_admin";
+  identityConfirmed: true;
+}
+
+/**
+ * API view of one immutable `leave_exit_authorizations` row — the
+ * authoritative record that a student physically left the hostel for a
+ * specific, already-`approved` leave request. Deliberately does not surface
+ * `authorizedByStaffId`: mirrors `LeaveApprovalEventView`'s own established
+ * privacy discipline (a fact about the EXIT, not about which specific staff
+ * member recorded it) — the actor is retained in the database row itself
+ * (and in the `leave_approval_events`/`audit_logs` rows this action also
+ * writes) for internal audit purposes, not for client display.
+ */
+export interface ExitAuthorizationView {
+  id: string;
+  leaveRequestId: string;
+  identityConfirmed: boolean;
+  authorizedAt: string;
 }

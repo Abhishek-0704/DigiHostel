@@ -1,0 +1,27 @@
+.strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--spacing-md);
+}
+
+.value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.criticalValue {
+  color: var(--color-error, #d32f2f);
+}
+
+.label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}

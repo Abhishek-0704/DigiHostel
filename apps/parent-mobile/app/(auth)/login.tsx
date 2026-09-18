@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import {
+  AccessibilityInfo,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
 import type { ParentRelationshipType } from "@digihostel/api-client-react";
 import { PageContainer } from "@/src/components/layout/PageContainer";
@@ -71,6 +78,19 @@ export default function Login() {
   };
 
   const canContinue = isValidRollNumber(rollNumber) && relationshipType !== null && !isSubmitting;
+
+  // See src/components/ui/TextField.tsx's identical fix — `accessibilityRole="alert"`
+  // alone is not reliably announced by TalkBack/VoiceOver on this platform.
+  useEffect(() => {
+    if (fieldError) {
+      AccessibilityInfo.announceForAccessibility(fieldError);
+    }
+  }, [fieldError]);
+  useEffect(() => {
+    if (submitError) {
+      AccessibilityInfo.announceForAccessibility(submitError.userMessage);
+    }
+  }, [submitError]);
 
   return (
     <KeyboardAvoidingView

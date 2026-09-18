@@ -618,4 +618,25 @@ No new accessibility pattern was introduced — every new component (`SecuritySt
 
 - If a backend security-event/audit endpoint is ever exposed to parents, `deviceActivity.ts`'s honest-unavailable copy is the single place to replace with a real query — no screen structure needs to change (the Activity section already exists on Device Details).
 - If a real device-count grows large enough to matter, `deviceFilters.ts`'s pure functions are ready for a search/filter UI without touching the underlying data layer.
+
+## 18. ADR-003 Implementation — Trusted Device Attestation (2026-09-13)
+
+**Status: real, production-intent architecture on Android; BLOCKED BY PLATFORM/INFRASTRUCTURE DEPENDENCY for genuine end-to-end verification.** This supersedes every "device registration is unimplemented" statement above (§9's capability table, §16's "Remaining production limitations", §17's "Backend capability dependencies") for the **Android** platform only — those sections are left unedited as an accurate historical record of the state at the time each was written, per this repository's own documentation convention; this section is the current status.
+
+`registerCurrentDevice()` (`src/services/devices/devices.ts`) is no longer an unconditional throw on Android. It now performs the full server-controlled flow ADR-003 requires:
+
+1. `POST /devices/challenge` — the backend issues a single-use, short-lived (5 min default), server-generated nonce, stored server-side only (`device_registration_challenges`, zero client-facing RLS policies — this app can never read, list, or forge one).
+2. A real native call into a new local Expo module (`modules/play-integrity/`, Google Play Integrity Standard/Classic API, `IntegrityManagerFactory`), bound to that exact nonce.
+3. `POST /devices/register` — the backend (`apps/api/src/domain/device/`) independently re-verifies the returned token against Google's servers (nonce match, package name match, request freshness, device-integrity verdict) and only then creates the `trusted_devices` row. This app still never writes to `trusted_devices` directly — no INSERT policy exists for `authenticated` (F-01 remediation, unchanged).
+
+On iOS, or if the native call/network call fails for any reason, `registerCurrentDevice()` still throws `DeviceServiceNotImplementedError` — no fallback, no locally-declared trust, matching this document's `AUTHENTICATED != TRUSTED DEVICE` invariant exactly as before.
+
+**The one missing piece: no Google Play Console project or Cloud Project number exists in this development environment.** `EXPO_PUBLIC_GOOGLE_CLOUD_PROJECT_NUMBER` is unset (`env.example`); `getGoogleCloudProjectNumber()` returns `null`; `registerCurrentDevice()` detects this and throws the same honest `DeviceServiceNotImplementedError` rather than attempting a native call that would fail anyway. This means:
+
+- The full architecture — challenge issuance, nonce binding, server-side Play Integrity verification, replay/cross-user/expiry rejection, audit logging, fail-closed error handling — is real, unit- and integration-tested (backend: `apps/api/src/domain/device/*.test.ts`, `*.integration.test.ts`; mobile: `registerDeviceOrchestration.test.ts`, `devices.test.ts`), and verified against a real local Postgres/pgTAP instance and the real workspace build/lint/typecheck pipeline.
+- **No genuine end-to-end device registration has ever succeeded against a real physical device**, because Google's Play Integrity API itself requires a real Cloud Project linked to a real Play Console app registration — a paid ($25 one-time), external, account-holder-owned dependency this session was explicitly told not to set up (user decision, 2026-09-13: "No, and I don't want to set this up right now").
+- A native rebuild of the Android dev client (to actually compile the new `play-integrity` Expo module into a running app) was deliberately **not performed** this task — it would consume real EAS build resources for a module whose live verdict cannot be meaningfully exercised without the missing Cloud Project number, and would need to be rebuilt again once real credentials exist. This is a judgment call, not an oversight.
+- TC-8.5 onward (physical-device re-validation) therefore could not be re-run to a genuine PASS. See the ADR-003 Implementation Report (`docs/adr/ADR-003-parent-device-verification-scope.md`'s implementation report, or the standalone report produced 2026-09-13) for the full evidence trail and final classification.
+
+iOS App Attest/DeviceCheck was not implemented in this task (Android-only scope, per the user's own prioritization when the platform-strategy question was raised) — `registerCurrentDevice()` on iOS is unchanged from every prior prompt's fail-closed behavior.
 - If a backend-computed security score or additional recommendation source is ever added, `Recommendation`'s flat shape absorbs it without a `RecommendationCard` redesign.

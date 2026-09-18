@@ -9,6 +9,8 @@ import type { BadgeTone } from "../../components/ui/Badge";
  */
 export function leaveStatusLabel(status: LeaveApprovalPresentationStatus): string {
   switch (status) {
+    case "not_yet_sent":
+      return "Submitted, awaiting hostel review";
     case "awaiting_response":
       return "Awaiting your response";
     case "approved":
@@ -24,6 +26,8 @@ export function leaveStatusLabel(status: LeaveApprovalPresentationStatus): strin
 
 export function leaveStatusTone(status: LeaveApprovalPresentationStatus): BadgeTone {
   switch (status) {
+    case "not_yet_sent":
+      return "neutral";
     case "awaiting_response":
       return "warning";
     case "approved":

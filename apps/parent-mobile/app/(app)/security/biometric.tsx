@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { AccessibilityInfo, ScrollView, StyleSheet, Text, View } from "react-native";
 import { PageContainer } from "@/src/components/layout/PageContainer";
 import { PageHeader } from "@/src/components/layout/PageHeader";
 import { SecurityInformationCard } from "@/src/components/ui/SecurityInformationCard";
@@ -29,6 +29,17 @@ export default function BiometricSettings() {
   const { capabilities, isEnabled, isLoadingStatus, isAuthenticating, enable, disable } =
     useBiometric();
   const [lastResultKind, setLastResultKind] = useState<BiometricResultKind | null>(null);
+
+  // See src/components/ui/TextField.tsx's identical fix — `accessibilityRole="alert"`
+  // alone is not reliably announced by TalkBack/VoiceOver on this platform.
+  // Placed before the early return below (rules of hooks).
+  useEffect(() => {
+    if (lastResultKind && lastResultKind !== "success") {
+      AccessibilityInfo.announceForAccessibility(
+        biometricResultMessage(lastResultKind).description,
+      );
+    }
+  }, [lastResultKind]);
 
   const handleEnable = async () => {
     setLastResultKind(null);

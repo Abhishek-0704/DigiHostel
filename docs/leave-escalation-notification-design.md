@@ -23,9 +23,11 @@ Every SDD chapter was extracted to plain text and searched directly, not assumed
 | **Logical notification** | `notifications` row, identity `(leave_request_id, stage, recipient_id)` per ADR-018 §1 | One per escalation stage per intended recipient — multi-device fan-out (ADR-018 §7) is a delivery-attempt detail, not a separate logical notification. |
 | **Approval event** | `leave_approval_events.event_type` (`notified`, `responded`, `escalated`, `expired`, `manual_override` — all exist) | Immutable business-workflow timeline. |
 
-## 3. Approval authority — ADR-016, ACCEPTED
+## 3. Approval authority — ADR-016, ACCEPTED (as narrowed by ADR-025, ACCEPTED)
 
 **Model C**: escalation controls notification priority/ordering only; any parent/guardian linked via `parent_student_relationships` may decide a request in any decidable status, exactly as already implemented and tested. Model B (stage-restricted authority) was evaluated and rejected — no source supports it, it introduces an unresolved `(student_id, relationship_type)` uniqueness question, and it works against the escalation chain's own reach-someone-quickly purpose. Full reasoning: [ADR-016](adr/ADR-016-leave-escalation-approval-authority.md).
+
+**Correction (Reception-Initiated Parent Approval correction, ADR-025, ACCEPTED)**: "any decidable status" above no longer includes `pending` — see [ADR-025](adr/ADR-025-parent-decision-authority-excludes-pending.md). This does not reopen Model C vs. Model B; it narrows the status domain Model C applies over, because `pending` now means "not yet sent for parent approval by Reception" rather than "the escalation chain's own first, already-in-flight stage."
 
 ## 4. Leave-side escalation state machine — ADR-017 (ACCEPTED) as corrected by ADR-019 (ACCEPTED)
 

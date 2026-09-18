@@ -13,6 +13,18 @@ dist
 web-build
 expo-env.d.ts
 
+# Expo prebuild output — this project uses the managed workflow (ADR-004);
+# native project directories are generated transiently (by `expo prebuild`
+# or a local `expo run:android`/`expo run:ios`), never committed. Anchored
+# to each app's own root so a local Expo *module*'s own native source (e.g.
+# apps/parent-mobile/modules/play-integrity/android/) is never matched by
+# this pattern — see Finding F-09's native-verification notes for the
+# real incident (a blocked prebuild attempt) this guards against.
+/apps/parent-mobile/android
+/apps/parent-mobile/ios
+/apps/student-mobile/android
+/apps/student-mobile/ios
+
 # environment / secrets
 .env
 .env.*

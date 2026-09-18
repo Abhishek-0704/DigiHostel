@@ -20,8 +20,14 @@ import type {
  * out-of-band flag.
  */
 
+// Reception-Initiated Parent Approval correction: "pending" deliberately
+// does NOT belong in this set. A `pending` leave request has not yet been
+// sent for parent approval by Reception — the backend's own
+// PARENT_DECIDABLE_STATUSES (apps/api/src/domain/leave/types.ts) excludes it
+// from decide() for the identical reason. It is mapped to "not_yet_sent"
+// below instead, so this app never presents an un-sent request as
+// actionable.
 const AWAITING_RESPONSE_STATUSES = new Set([
-  "pending",
   "father_notified",
   "mother_notified",
   "guardian_notified",
@@ -29,10 +35,14 @@ const AWAITING_RESPONSE_STATUSES = new Set([
   "manual_verification",
 ]);
 
-/** Collapses every pre-decision escalation stage into `"awaiting_response"`
- * — see `types.ts`'s doc comment on `LeaveApprovalPresentationStatus` for
- * why the raw stage is never surfaced individually. */
+/** Collapses every stage a parent can actually decide on into
+ * `"awaiting_response"`, and `pending` into its own dedicated
+ * `"not_yet_sent"` — see `types.ts`'s doc comment on
+ * `LeaveApprovalPresentationStatus` for why the raw stage is never surfaced
+ * individually and why `pending` is never conflated with
+ * `"awaiting_response"`. */
 export function mapBackendStatus(status: string): LeaveApprovalPresentationStatus {
+  if (status === "pending") return "not_yet_sent";
   if (AWAITING_RESPONSE_STATUSES.has(status)) return "awaiting_response";
   if (status === "approved") return "approved";
   if (status === "rejected") return "rejected";
@@ -105,6 +115,8 @@ export function deriveUiStateFromPresentation(
       return "already_processed";
     case "awaiting_response":
       return "loaded";
+    case "not_yet_sent":
+      return "not_yet_sent";
     default:
       return "unavailable";
   }

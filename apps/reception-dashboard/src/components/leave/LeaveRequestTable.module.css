@@ -1,0 +1,41 @@
+.studentCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.studentName {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.studentMeta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.dateRange {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.viewButton {
+  font-size: 12px;
+  padding: 4px var(--spacing-sm);
+}
+
+.activeRow {
+  background: var(--color-surface-variant);
+}
+
+.skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.skeletonRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

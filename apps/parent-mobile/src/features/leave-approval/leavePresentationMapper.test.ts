@@ -22,7 +22,6 @@ function backendRow(overrides: Partial<Record<string, string>> = {}) {
 
 describe("mapBackendStatus", () => {
   it.each([
-    "pending",
     "father_notified",
     "mother_notified",
     "guardian_notified",
@@ -30,6 +29,14 @@ describe("mapBackendStatus", () => {
     "manual_verification",
   ])("collapses %s into awaiting_response", (status) => {
     expect(mapBackendStatus(status)).toBe("awaiting_response");
+  });
+
+  // Reception-Initiated Parent Approval correction: "pending" is
+  // deliberately NOT collapsed into "awaiting_response" — it has not yet
+  // been sent for parent approval by Reception, so it must never present as
+  // actionable.
+  it("maps pending into its own not_yet_sent status, never awaiting_response", () => {
+    expect(mapBackendStatus("pending")).toBe("not_yet_sent");
   });
 
   it("maps approved/rejected/expired directly", () => {
@@ -55,7 +62,11 @@ describe("mapLeaveRequestToPresentation", () => {
       reason: "Family function",
       departureDate: "2026-09-10",
       expectedReturnDate: "2026-09-12",
-      status: "awaiting_response",
+      // Default backendRow() status is "pending" — not yet sent for parent
+      // approval by Reception (Reception-Initiated Parent Approval
+      // correction), so this must be "not_yet_sent", never
+      // "awaiting_response".
+      status: "not_yet_sent",
       createdAt: "2026-09-01T10:00:00.000Z",
       expiryTimestamp: null,
     });
@@ -144,8 +155,13 @@ describe("deriveUiStateFromPresentation", () => {
     expect(deriveUiStateFromPresentation(presentation("unknown"))).toBe("unavailable");
   });
 
+  it("not_yet_sent -> not_yet_sent (not 'unavailable' — a pending request awaiting Reception review is a real, distinct state)", () => {
+    expect(deriveUiStateFromPresentation(presentation("not_yet_sent"))).toBe("not_yet_sent");
+  });
+
   it("never produces 'cancelled' — no cancellation concept exists in the backend model", () => {
     const statuses: LeaveRequestPresentation["status"][] = [
+      "not_yet_sent",
       "awaiting_response",
       "approved",
       "rejected",

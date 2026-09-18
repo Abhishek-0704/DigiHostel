@@ -1,0 +1,132 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-md);
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  padding: var(--spacing-md);
+}
+
+.heading {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+.metaList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.metaRow dt {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.metaRow dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.unavailableNote {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: var(--spacing-sm) 0 0 0;
+}
+
+.guardianList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.guardianItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guardianName {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.guardianMeta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.leaveHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.leavePeriod {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.leaveReason {
+  font-size: 13px;
+  margin: var(--spacing-sm) 0 0 0;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.timelineItem {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  border-left: 2px solid var(--color-border);
+  padding-left: var(--spacing-sm);
+}
+
+.timelineLabel {
+  font-size: 13px;
+}
+
+.timelineTime {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.actionsGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}

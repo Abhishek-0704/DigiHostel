@@ -1,6 +1,23 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PARENT_RELATIONSHIP_TYPES } from "../domain/auth/types.js";
+import { requireStaffRole } from "../lib/auth/guards.js";
+import { recordStaffAuthEvent, type StaffAuthAuditEvent } from "../domain/auth/staffAuthAudit.js";
+
+const STAFF_AUTH_AUDIT_EVENTS = [
+  "sign_in_success",
+  "mfa_success",
+  "mfa_failure",
+  "sign_out",
+] as const;
+
+const staffAuthEventBodySchema = z
+  .object({
+    event: z.enum(STAFF_AUTH_AUDIT_EVENTS, {
+      errorMap: () => ({ message: `event must be one of ${STAFF_AUTH_AUDIT_EVENTS.join(", ")}.` }),
+    }),
+  })
+  .strict();
 
 // .strict() rejects any unrecognized field outright — in particular, this is
 // what makes a client-supplied "phone" field a hard 400 rather than a
@@ -81,6 +98,39 @@ export async function authRoutes(app: FastifyInstance) {
       }
 
       await reply.code(200).send(result);
+    },
+  );
+
+  // Reception Dashboard Prompt 1 (Authentication Infrastructure) — see
+  // openapi.yaml's operation description and staffAuthAudit.ts's doc
+  // comment for why this exists and which events it does/doesn't cover.
+  // Any staff role may report its own auth events here (not just the three
+  // Reception Dashboard roles) — this endpoint grants no dashboard access,
+  // it only records that something already happened at the IdP level.
+  app.post(
+    "/auth/staff/audit-events",
+    {
+      preHandler: [
+        app.authenticate,
+        requireStaffRole("reception_warden", "hostel_admin", "super_admin", "library_incharge"),
+      ],
+      config: { rateLimit: app.rateLimitTiers.staffAuthAudit },
+    },
+    async (request, reply) => {
+      const body = staffAuthEventBodySchema.safeParse(request.body);
+      if (!body.success) {
+        await reply.code(400).send({
+          error: {
+            code: "validation_failed",
+            message: body.error.issues[0]?.message ?? "Invalid request body.",
+          },
+        });
+        return;
+      }
+
+      const profile = request.auth!.profile as { kind: "staff"; id: string };
+      await recordStaffAuthEvent(profile.id, body.data.event as StaffAuthAuditEvent);
+      await reply.code(204).send();
     },
   );
 }

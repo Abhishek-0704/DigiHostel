@@ -1,0 +1,46 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-left: 2px solid var(--color-border);
+}
+
+.itemRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.timestamp {
+  font-size: 12px;
+  color: var(--color-text-disabled);
+  white-space: nowrap;
+}
+
+.detail {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}

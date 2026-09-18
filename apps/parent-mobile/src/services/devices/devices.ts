@@ -1,12 +1,24 @@
+import { Platform } from "react-native";
+import {
+  requestDeviceChallenge,
+  registerDevice as registerDeviceRequest,
+} from "@digihostel/api-client-react";
 import { getSupabaseClient } from "../supabase/client";
 import { deviceIdentityService } from "../deviceIdentity/deviceIdentity";
+import { getGoogleCloudProjectNumber } from "../../config/env";
 import { DeviceServiceNotImplementedError } from "./deviceServiceErrors";
+import {
+  orchestrateAndroidDeviceRegistration,
+  DeviceAttestationNotConfiguredError,
+} from "./registerDeviceOrchestration";
+import PlayIntegrityModule from "../../../modules/play-integrity/src/DigihostelPlayIntegrityModule";
 
 export { DeviceServiceNotImplementedError } from "./deviceServiceErrors";
 
 /**
  * Trusted-device service (Prompt 2 foundation; extended in Prompt 3;
- * extended again in Prompt 4B for device-management presentation).
+ * extended again in Prompt 4B for device-management presentation; ADR-003
+ * implementation task — real registerCurrentDevice()).
  *
  * `hasActiveTrustedDevice()` and `listTrustedDevices()` are REAL — they
  * read `trusted_devices` directly via the Supabase client, relying entirely
@@ -21,32 +33,30 @@ export { DeviceServiceNotImplementedError } from "./deviceServiceErrors";
  * decision. The backend independently re-checks device trust on every
  * approve/reject call regardless of what this returns.
  *
- * `registerCurrentDevice()` remains fail-closed and unimplemented: ADR-003
- * requires platform attestation (Play Integrity / App Attest) *before* a
- * device is marked trusted. There is no longer even an RLS policy that
- * would let this app self-INSERT a `trusted_devices` row — `authenticated`
- * has no INSERT policy on this table at all (PRR Phase 13, Finding F-01
- * remediation: the previous `trusted_devices_insert_own` policy let any
- * authenticated parent self-insert a fully active row with no attestation
- * check, which this comment used to (accurately, at the time) call "technically
- * permissive" — it has since been removed, `supabase/migrations/0003_f01_trusted_devices_rls_remediation.sql`).
- * Real device registration, once implemented, must go through the backend's
- * own privileged connection after verifying attestation server-side — RLS
- * cannot verify a Play Integrity/App Attest result, so no client-facing
- * INSERT policy on this table can ever be correct. This stays unimplemented
- * until a real attestation-verification integration point exists (backend
- * and/or mobile SDK work neither of which exists yet — see docs/current-state.md).
+ * `registerCurrentDevice()` is now REAL on Android: it performs the full
+ * server-controlled flow (ADR-003 implementation task §6/§10) —
+ *   1. POST /devices/challenge — obtain a server-issued, single-use nonce.
+ *   2. Native Play Integrity call, bound to that exact nonce.
+ *   3. POST /devices/register — submit the resulting token; the backend
+ *      (apps/api/src/domain/device/) verifies it server-side and only THEN
+ *      creates the trusted_devices row. This app never writes to
+ *      trusted_devices directly — there is still no INSERT policy granting
+ *      `authenticated` that access at all (F-01 remediation,
+ *      `supabase/migrations/0003_f01_trusted_devices_rls_remediation.sql`),
+ *      matching this table's own schema comment.
+ * On iOS/web, or if the native call/network call fails for any reason, this
+ * throws — never falls back to a locally-declared trust state. iOS App
+ * Attest is a separate, not-yet-implemented integration (see the ADR-003
+ * implementation report's "iOS Attestation Status" section).
  *
- * `revokeDevice()` also remains unimplemented (Prompt 4B): revoking one's
- * own device only *reduces* access and could, in principle, be a direct
- * RLS-scoped UPDATE via `trusted_devices_revoke_own` — but a raw client
- * UPDATE would let this app revoke a device with no audit trail, no
- * confirmation the backend has consistent state, and no coordination with
- * `device_attestation_events`. Implementing it as a bare UPDATE here would
- * be exactly the kind of "backend security logic in the client" Prompt 4B's
- * own instructions forbid inventing. It stays fail-closed until a real,
- * backend-owned removal endpoint exists (tracked the same way as
- * registration — see docs/authentication.md §15).
+ * `revokeDevice()` remains unimplemented (Prompt 4B, unchanged by this
+ * task): revoking one's own device only *reduces* access and could, in
+ * principle, be a direct RLS-scoped UPDATE via `trusted_devices_revoke_own`
+ * — but a raw client UPDATE would let this app revoke a device with no audit
+ * trail, no confirmation the backend has consistent state, and no
+ * coordination with `device_attestation_events`. It stays fail-closed until
+ * a real, backend-owned removal endpoint exists (tracked the same way
+ * registration used to be — see docs/authentication.md §15).
  */
 
 export type DeviceTrustState = "active" | "revoked";
@@ -61,9 +71,7 @@ export interface TrustedDeviceSummary {
   revokedReason: string | null;
   /** True only when this row's stored `device_fingerprint` matches this
    * installation's own id (`deviceIdentityService`) — a real comparison,
-   * not a hardcoded value. Will be false for every device until a real
-   * registration flow exists to ever set a matching fingerprint (see
-   * `registerCurrentDevice` above) — that is expected, not a bug. */
+   * not a hardcoded value. */
   isCurrentDevice: boolean;
 }
 
@@ -71,7 +79,7 @@ export interface DeviceService {
   /** Cheap, real, RLS-backed check: does the current parent have at least
    * one non-revoked trusted device? Used by AuthContext to decide between
    * "authenticated" and "device_verification_required" — a UX routing
-   * signal only, never itself a grant of access to a protected operation. */
+   * signal only, never itself the authorization decision. */
   hasActiveTrustedDevice(): Promise<boolean>;
   /** Real, RLS-backed list of every trusted-device row belonging to the
    * current parent — active AND revoked, newest first. Revoked rows are
@@ -122,8 +130,43 @@ export const deviceService: DeviceService = {
     }));
   },
 
-  async registerCurrentDevice(): Promise<never> {
-    throw new DeviceServiceNotImplementedError("registration");
+  async registerCurrentDevice() {
+    if (Platform.OS !== "android") {
+      // iOS App Attest/DeviceCheck is a separate, not-yet-implemented
+      // integration — see the ADR-003 implementation report. Honest
+      // fail-closed, not a fabricated success.
+      throw new DeviceServiceNotImplementedError("registration");
+    }
+
+    let device;
+    try {
+      device = await orchestrateAndroidDeviceRegistration({
+        requestChallenge: (platform) => requestDeviceChallenge({ platform }),
+        requestIntegrityToken: (nonce, cloudProjectNumber) =>
+          PlayIntegrityModule.requestIntegrityToken(nonce, cloudProjectNumber),
+        submitRegistration: (input) => registerDeviceRequest(input),
+        getInstallationId: () => deviceIdentityService.getInstallationId(),
+        getCloudProjectNumber: getGoogleCloudProjectNumber,
+      });
+    } catch (err) {
+      if (err instanceof DeviceAttestationNotConfiguredError) {
+        // No Google Play Console/Cloud Project exists in this environment
+        // yet (see the ADR-003 implementation report) — surfaced as the same
+        // honest "not implemented" error the caller already knows how to
+        // handle, rather than a new, undocumented failure mode.
+        throw new DeviceServiceNotImplementedError("registration");
+      }
+      throw err;
+    }
+
+    return {
+      id: device.id,
+      platform: device.platform,
+      registeredAt: device.registeredAt,
+      revokedAt: null,
+      revokedReason: null,
+      isCurrentDevice: true,
+    };
   },
 
   async revokeDevice(): Promise<never> {

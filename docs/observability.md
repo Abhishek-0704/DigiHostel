@@ -368,18 +368,19 @@ live-verified on Render staging.** The section below reflects that; see
   each, both from 2026-09-06 — unchanged and correctly explained by
   staging's `leave_requests` table remaining empty (no seed data run
   remotely), not a worker defect.
-- **PRODUCTION BLOCKER — remaining, genuine**: F-05's and F-05A's
-  migrations (`0005`/`0006`) are still **not applied to the real staging
-  database** — `deploy-migrations.yml` has the identical missing-secrets
-  problem as `ci.yml` had (`SUPABASE_ACCESS_TOKEN`/`SUPABASE_PROJECT_ID`/
-  `SUPABASE_DB_PASSWORD` all confirmed empty), so the corrected
-  hostel/reception RLS scoping exists only in code and in the local dev
-  database, not yet on the live staging Postgres instance. This is an
-  F-05/F-05A deployment gap surfaced during F-07B's process, not fixed here
-  (out of this task's scope — applying migrations to the live staging
-  database is a distinct, consequential action from what this task's
-  authorization covered). Render/Supabase plan upgrades remain untouched,
-  per this task's explicit instruction.
+- **PRODUCTION BLOCKER, found by F-07B (2026-09-06) — RESOLVED, confirmed
+  2026-09-08.** F-07B found F-05's and F-05A's migrations (`0005`/`0006`)
+  not yet applied to the real staging database at that time
+  (`deploy-migrations.yml` had the identical missing-secrets problem
+  `ci.yml` had). **This is no longer the case**: `supabase migration list
+  --linked`, re-run this task (F-07 closure), shows all 8 migrations
+  (`0000`–`0007`, including `0005`/`0006`) with `local`/`remote` matching
+  exactly — the corrected hostel/reception RLS scoping is live on staging,
+  not merely in code and the local dev database. This document previously
+  continued describing it as an open blocker after it was already
+  resolved elsewhere; corrected here as a documentation fix only, per this
+  task's own explicit "do not reopen F-05/F-05A" instruction — no
+  migration, schema, or RLS change was made by this correction.
 
 ## 10. What this task (F-07 + F-07B) did not do
 

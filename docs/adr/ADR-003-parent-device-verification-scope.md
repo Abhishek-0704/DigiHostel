@@ -65,6 +65,14 @@ Mandate Play Integrity/DeviceCheck/App Attest immediately (low cost, well-suppor
 
 The feasibility spike required by this ADR's Consequences section has been completed: see `docs/research/sim-verification-feasibility.md`. Verdict: **partially feasible** — technically achievable on both Android and iOS only via commercial carrier/telecom-aggregator Silent Network Authentication (not a free platform API, not a simple SDK), with real per-verification cost and partnership overhead. This confirms rather than contradicts this ADR's original deferral; no supersession is required. Practical recommendation: SIM/SNA verification is out of scope for MVP, available as a future hardening option pending budget/partnership capacity.
 
+## Addendum (2026-09-13, added post-acceptance — implementation reference only, does not alter the Decision/Context/Rationale above)
+
+The mandatory platform-attestation gate (this ADR's Decision §1, Android leg) has been implemented: server-controlled challenge/nonce issuance (`device_registration_challenges`, single-use, short-lived, no client-facing RLS access), a real Google Play Integrity verifier that independently re-verifies the returned token server-side before a device is ever marked trusted, and a local Expo native module making the real Play Integrity call on the client. Full detail, evidence, and test coverage: `apps/parent-mobile/docs/authentication.md` §18 and the standalone ADR-003 Implementation Report (2026-09-13).
+
+**Status of verification, honestly stated**: the architecture is real and tested (unit + integration, backend and mobile, against a real local Postgres instance), but no genuine end-to-end attestation has been verified against Google's live Play Integrity servers or on a physical device, because no Google Play Console project/Cloud Project number exists in this development environment — a real, external, account-holder-owned, paid dependency, not a technical gap in the code. This is classified as **BLOCKED BY PLATFORM/INFRASTRUCTURE DEPENDENCY**, not IMPLEMENTED AND VERIFIED. iOS DeviceCheck/App Attest (this ADR's Decision §1, iOS leg) was not implemented in this pass — `registerCurrentDevice()` remains fail-closed on iOS, unchanged.
+
+This confirms rather than alters this ADR's original decision; no supersession is required.
+
 ## Rejected Alternatives
 
 - **Option A** — rejected: silently drops a named security control from the dedicated security chapter, contradicting `CLAUDE.md`'s security-first mandate.

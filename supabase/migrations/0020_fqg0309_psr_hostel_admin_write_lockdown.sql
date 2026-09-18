@@ -1,0 +1,80 @@
+-- F-QG03-09 remediation (CRITICAL) — independent QG-03 re-verification.
+--
+-- ============================================================================
+-- Root cause. The prior QG-03 remediation (0019) correctly scoped `parents`'
+-- hostel_admin SELECT/UPDATE/DELETE via a new helper,
+-- is_hostel_admin_for_parent, which determines a parent's hostel relevance by
+-- checking for an EXISTS'ing row in parent_student_relationships joined to
+-- students.hostel_id. That helper correctly trusts the relationship table's
+-- CONTENT — but `psr_all_hostel_admin` (present, unmodified, since the very
+-- first migration, 0000_cute_korvac.sql) is a `for: "all"` policy granting
+-- hostel_admin unrestricted INSERT/UPDATE/DELETE on that same relationship
+-- table, scoped ONLY by the student side (is_hostel_admin_for_student), with
+-- NO validation of the parent side at all.
+--
+-- The independent QG-03 re-verification board live-reproduced the resulting
+-- bypass: a genuine, non-privileged Kalinga hostel_admin session, given only
+-- the UUID of a parent with NO legitimate relationship to any Kalinga
+-- student, INSERTed a fabricated parent_student_relationships row linking
+-- that parent to one of the admin's own (legitimately-scoped) students. The
+-- fabricated row then satisfied is_hostel_admin_for_parent's EXISTS check,
+-- and the SAME session immediately SELECTed and UPDATEd (a forged phone
+-- number, which persisted and was independently re-confirmed via a
+-- service-role re-read before being reverted) the previously-inaccessible
+-- parent — fully reinstating the exact cross-hostel PII read+write impact
+-- F-QG03-01 was remediated to eliminate, via an indirect path through a
+-- sibling table neither the original QG-03 review nor the 0019 remediation
+-- had examined as part of that specific attack surface.
+--
+-- ----------------------------------------------------------------------------
+-- Reconnaissance (see docs/qg03-remediation.md's F-QG03-09 section for the
+-- full account): an exhaustive repository search for every writer of
+-- parent_student_relationships found NONE in any product code path.
+-- Fastify (apps/api) only ever SELECTs this table (eligibilityRepository —
+-- OTP eligibility resolution; db-port.ts — trusted-device/auth lookups;
+-- student/repository.ts — GET /students/{rollNumber} guardian enrichment;
+-- leave/repository.ts — parent-decision-authority EXISTS check;
+-- notification/repository.ts — escalation recipient resolution), all via its
+-- service-role connection, which bypasses RLS entirely and is therefore
+-- completely unaffected by this migration. No apps/reception-dashboard
+-- source file references this table at all (no UI exists to create, edit, or
+-- delete a relationship). The Parent App (apps/parent-mobile) only SELECTs
+-- its own linked relationships (psr_select_own_parent, unaffected). Every
+-- INSERT/DELETE against this table found anywhere in the repository is
+-- either supabase/seed.sql (service-role, bypasses RLS) or test-fixture setup
+-- in *.integration.test.ts files (also via the service-role db client).
+--
+-- Conclusion: hostel_admin has NO legitimate product workflow that writes to
+-- parent_student_relationships today. The correct, minimal, evidence-based
+-- fix — mirroring the exact precedent 0019 already established for `parents`
+-- INSERT ("no legitimate workflow = no policy, deny outright" rather than a
+-- narrower-but-still-present grant) — is to remove hostel_admin's write
+-- authority (INSERT/UPDATE/DELETE) on this table entirely, retaining only the
+-- existing, correctly-scoped SELECT. This closes the INSERT-fabrication
+-- vector the exploit used, and ALSO closes the UPDATE-based ownership-mutation
+-- vector (mutating parent_id/student_id to re-target a relationship — never
+-- exploited live, but reachable via the same removed grant) and any DELETE
+-- vector, without needing a more complex "validate both sides of the
+-- relationship" heuristic for a write capability nothing legitimate uses.
+--
+-- If a genuine product requirement for staff-initiated relationship
+-- management is built in the future, it MUST NOT simply restore this `for:
+-- "all"` grant — it must independently validate the parent side (not just
+-- trust the student side), and should likely require a distinct, auditable
+-- verification step given the sensitivity of re-pointing PII access.
+--
+-- Multi-hostel-parent semantics (a parent legitimately linked to students in
+-- more than one hostel, established by the 0019 remediation) are UNCHANGED
+-- by this migration — only WRITE authority is removed; the existing
+-- `psr_select_hostel_admin` (renamed from the SELECT clause of the dropped
+-- policy, identical USING expression) continues to let each relevant
+-- hostel's admin read the relationship row for their own hostel's student,
+-- exactly as before.
+--
+-- super_admin (`psr_all_super_admin`) is entirely untouched — unscoped
+-- authority for that role is deliberate, established, existing design
+-- throughout this schema, and out of this finding's scope.
+-- ============================================================================
+DROP POLICY "psr_all_hostel_admin" ON "parent_student_relationships" CASCADE;--> statement-breakpoint
+
+CREATE POLICY "psr_select_hostel_admin" ON "parent_student_relationships" AS PERMISSIVE FOR SELECT TO "authenticated" USING (public.is_hostel_admin_for_student("parent_student_relationships"."student_id"));

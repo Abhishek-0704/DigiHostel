@@ -91,6 +91,31 @@ export interface LeaveRequest {
   updatedAt: string;
 }
 
+/**
+ * A leave_requests row enriched with the minimum student/hostel/room context the Reception Dashboard's queue table needs — never a parent identity or contact detail (staff have no legitimate reason to see that here, docs/rls-policy-matrix.md), and never any KIIT SAP/mentor- approval field (no such data source is wired to this endpoint — see apps/reception-dashboard/docs/leave-queue.md).
+
+ */
+export interface StaffLeaveQueueItem {
+  id: string;
+  studentId: string;
+  studentRollNumber: string;
+  studentFullName: string;
+  /** @nullable */
+  studentHostelId: string | null;
+  /** @nullable */
+  studentHostelName: string | null;
+  /** @nullable */
+  studentRoomId: string | null;
+  /** @nullable */
+  studentRoomNumber: string | null;
+  reason: string;
+  startDate: string;
+  endDate: string;
+  status: LeaveRequestStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type LeaveApprovalEventEventType = typeof LeaveApprovalEventEventType[keyof typeof LeaveApprovalEventEventType];
 
 
@@ -157,6 +182,25 @@ export interface LeaveDecisionRequest {
 }
 
 /**
+ * Phase 3, Prompt 7C. `identityConfirmed` must be the literal `true` — a staff attestation that the person at reception has been visually confirmed to match the student's identity, never independently re-derivable by the server. No other field is accepted: in particular, no client-supplied mentorApproved/parentApproved/ staffId/studentId/hostelId/role/authorizationStatus/exitTimestamp value has any effect on authorization, which is resolved entirely server-side from the authenticated caller's own staff profile.
+
+ */
+export interface ExitAuthorizationRequest {
+  identityConfirmed: boolean;
+}
+
+/**
+ * One immutable leave_exit_authorizations row — the authoritative record that a student physically left the hostel for a specific leave request. Deliberately excludes which specific staff member authorized it (same actor-identity-omission discipline as LeaveApprovalEvent).
+
+ */
+export interface ExitAuthorization {
+  id: string;
+  leaveRequestId: string;
+  identityConfirmed: boolean;
+  authorizedAt: string;
+}
+
+/**
  * Mirrors packages/db/src/schema/enums.ts's parent_relationship_type enum.
  */
 export type ParentRelationshipType = typeof ParentRelationshipType[keyof typeof ParentRelationshipType];
@@ -168,6 +212,25 @@ export const ParentRelationshipType = {
   mother: 'mother',
   guardian: 'guardian',
 } as const;
+
+export type StaffAuthEventBodyEvent = typeof StaffAuthEventBodyEvent[keyof typeof StaffAuthEventBodyEvent];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StaffAuthEventBodyEvent = {
+  sign_in_success: 'sign_in_success',
+  mfa_success: 'mfa_success',
+  mfa_failure: 'mfa_failure',
+  sign_out: 'sign_out',
+} as const;
+
+/**
+ * Only events reportable while still holding a valid bearer token — see POST /auth/staff/audit-events's own description.
+
+ */
+export interface StaffAuthEventBody {
+  event: StaffAuthEventBodyEvent;
+}
 
 /**
  * Deliberately has no phone field of any kind — the authoritative phone number is resolved entirely server-side and is never accepted from the client (F-02 core requirement).
@@ -198,6 +261,53 @@ export interface OtpChallenge {
 }
 
 /**
+ * Mirrors packages/db/src/schema/enums.ts's device_platform enum.
+ */
+export type DevicePlatform = typeof DevicePlatform[keyof typeof DevicePlatform];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const DevicePlatform = {
+  android: 'android',
+  ios: 'ios',
+} as const;
+
+export interface RequestDeviceChallengeBody {
+  platform: DevicePlatform;
+}
+
+export interface DeviceChallenge {
+  challengeId: string;
+  /** Pass this exact value into the platform attestation call (e.g. Play Integrity's requestHash/nonce parameter) so the resulting token is cryptographically bound to this specific challenge.
+ */
+  nonce: string;
+  expiresAt: string;
+}
+
+export interface RegisterDeviceBody {
+  challengeId: string;
+  platform: DevicePlatform;
+  /**
+   * The opaque token the platform attestation API produced (a Play Integrity integrity token on Android) — never inspected or decoded by the client, only relayed to the backend.
+
+   * @minLength 1
+   */
+  attestationToken: string;
+  /**
+   * This installation's own random, app-generated identifier (services/deviceIdentity — never a hardware serial/IMEI/Android ID), used only to recognize the same installation on a future listTrustedDevices() call, never as attestation proof itself.
+
+   * @minLength 1
+   */
+  deviceFingerprint: string;
+}
+
+export interface TrustedDevice {
+  id: string;
+  platform: DevicePlatform;
+  registeredAt: string;
+}
+
+/**
  * Real Supabase session tokens — the client adopts these locally via supabase.auth.setSession(), never receiving a phone number at any point in this flow.
 
  */
@@ -216,6 +326,732 @@ export type ErrorBodyError = {
 
 export interface ErrorBody {
   error: ErrorBodyError;
+}
+
+/**
+ * Deliberately narrower than the full `students` row — never `authUserId` (an internal identity-linkage field with no product purpose on a staff-facing read surface). No department/program/ semester/gender/phone/photograph field is represented anywhere in this schema — none exists in the authoritative `students` table.
+
+ */
+export interface StudentSearchResultItem {
+  id: string;
+  rollNumber: string;
+  fullName: string;
+  /** @nullable */
+  hostelId: string | null;
+  /** @nullable */
+  hostelName: string | null;
+  /** @nullable */
+  roomId: string | null;
+  /** @nullable */
+  roomNumber: string | null;
+}
+
+export interface StudentSearchResult {
+  items: StudentSearchResultItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/**
+ * One linked parent/guardian, minimized to exactly what the Student Operations Center profile needs — never an internal id or authentication identifier.
+
+ */
+export interface StudentGuardian {
+  fullName: string;
+  relationshipType: ParentRelationshipType;
+  phoneNumber: string;
+}
+
+/**
+ * The student's own most recent DigiHostel Hostel Leaving Request — reused, unmutated, read-only data from the certified Parent Approval / Exit Authorization workflow. Never the separate KIIT SAP Holiday Request concept.
+
+ */
+export interface StudentCurrentLeave {
+  id: string;
+  status: LeaveRequestStatus;
+  reason: string;
+  startDate: string;
+  endDate: string;
+  createdAt: string;
+  updatedAt: string;
+  exitAuthorized: boolean;
+  /** @nullable */
+  exitAuthorizedAt: string | null;
+  returnRecorded: boolean;
+  /** @nullable */
+  returnedAt: string | null;
+}
+
+export type StudentTimelineEventEventType = typeof StudentTimelineEventEventType[keyof typeof StudentTimelineEventEventType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StudentTimelineEventEventType = {
+  notified: 'notified',
+  responded: 'responded',
+  escalated: 'escalated',
+  expired: 'expired',
+  manual_override: 'manual_override',
+} as const;
+
+/**
+ * @nullable
+ */
+export type StudentTimelineEventResponse = typeof StudentTimelineEventResponse[keyof typeof StudentTimelineEventResponse] | null;
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StudentTimelineEventResponse = {
+  approved: 'approved',
+  rejected: 'rejected',
+  no_response: 'no_response',
+} as const;
+
+/**
+ * One immutable leave_approval_events row for the student's current leave request — same actor-omission discipline as LeaveApprovalEvent: never reveals which specific parent/guardian/ staff member acted.
+
+ */
+export interface StudentTimelineEvent {
+  id: string;
+  eventType: StudentTimelineEventEventType;
+  /** @nullable */
+  response: StudentTimelineEventResponse;
+  occurredAt: string;
+}
+
+/**
+ * Server-derived, never persisted. "outside_hostel" iff the student's own current leave request is genuinely exit-authorized and has no return recorded yet; "inside_hostel" otherwise (including "no leave request at all"). Never trust a client-supplied value for this — it is computed entirely server-side from leave_exit_authorizations and movements (Phase 4, Prompt 9 remediation).
+
+ */
+export type HostelPresence = typeof HostelPresence[keyof typeof HostelPresence];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const HostelPresence = {
+  inside_hostel: 'inside_hostel',
+  outside_hostel: 'outside_hostel',
+} as const;
+
+/**
+ * @nullable
+ */
+export type StudentProfileCurrentLeave = StudentCurrentLeave | null;
+
+export interface StudentProfile {
+  id: string;
+  rollNumber: string;
+  fullName: string;
+  /** @nullable */
+  hostelId: string | null;
+  /** @nullable */
+  hostelName: string | null;
+  /** @nullable */
+  roomId: string | null;
+  /** @nullable */
+  roomNumber: string | null;
+  guardians: StudentGuardian[];
+  /** @nullable */
+  currentLeave: StudentProfileCurrentLeave;
+  timeline: StudentTimelineEvent[];
+  hostelPresence: HostelPresence;
+}
+
+/**
+ * A recorded Movement Engine row (movement_type = hostel_return) — deliberately narrower than the full `movements` row, never `recordedByStaffId` (actor identity is never revealed to a client, matching ExitAuthorization's identical discipline).
+
+ */
+export interface HostelReturn {
+  id: string;
+  leaveRequestId: string;
+  studentId: string;
+  occurredAt: string;
+}
+
+/**
+ * The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table's original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned/accepted here.
+
+ */
+export type EmergencyCategory = typeof EmergencyCategory[keyof typeof EmergencyCategory];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const EmergencyCategory = {
+  medical: 'medical',
+  personal_safety: 'personal_safety',
+  fire: 'fire',
+  security_threat: 'security_threat',
+  violence: 'violence',
+  infrastructure: 'infrastructure',
+  harassment: 'harassment',
+  other: 'other',
+} as const;
+
+export type EmergencySeverity = typeof EmergencySeverity[keyof typeof EmergencySeverity];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const EmergencySeverity = {
+  critical: 'critical',
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
+  informational: 'informational',
+} as const;
+
+/**
+ * The EOC's own 5-state lifecycle. `escalated` (a value that exists on the underlying column for the separate checkpoint-monitoring domain) is deliberately not part of this API's vocabulary — no concrete EOC requirement justifies exposing it.
+
+ */
+export type EmergencyStatus = typeof EmergencyStatus[keyof typeof EmergencyStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const EmergencyStatus = {
+  open: 'open',
+  acknowledged: 'acknowledged',
+  in_progress: 'in_progress',
+  resolved: 'resolved',
+  closed: 'closed',
+} as const;
+
+export type EmergencyEventType = typeof EmergencyEventType[keyof typeof EmergencyEventType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const EmergencyEventType = {
+  created: 'created',
+  acknowledged: 'acknowledged',
+  response_started: 'response_started',
+  note_added: 'note_added',
+  resolved: 'resolved',
+  closed: 'closed',
+} as const;
+
+/**
+ * One immutable security_incident_events row — the EOC's own operational timeline (mirrors LeaveApprovalEvent's shape). Unlike LeaveApprovalEvent, actor identity (a staff member's name) IS included: this domain is staff-only end to end, so showing which colleague acted carries none of the student/parent-facing disclosure concern that discipline exists to prevent elsewhere.
+
+ */
+export interface EmergencyEvent {
+  id: string;
+  eventType: EmergencyEventType;
+  /** @nullable */
+  note: string | null;
+  /** @nullable */
+  actorStaffName: string | null;
+  occurredAt: string;
+}
+
+/**
+ * Deliberately minimal student identification (name/roll number/ hostel/room) — reused DISPLAY fields only, never a duplicated guardian/leave query. Use "Open Student Profile" (the existing Student Operations Center) for anything more.
+
+ */
+export interface EmergencyListItem {
+  id: string;
+  studentId: string;
+  studentFullName: string;
+  studentRollNumber: string;
+  /** @nullable */
+  hostelId: string | null;
+  /** @nullable */
+  hostelName: string | null;
+  /** @nullable */
+  roomNumber: string | null;
+  category: EmergencyCategory;
+  severity: EmergencySeverity;
+  status: EmergencyStatus;
+  reportedAt: string;
+  /** @nullable */
+  assignedStaffId: string | null;
+  /** @nullable */
+  assignedStaffName: string | null;
+}
+
+export interface EmergencyList {
+  items: EmergencyListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export type EmergencyDetailAllOf = {
+  /** @nullable */
+  description: string | null;
+  /** @nullable */
+  resolvedAt: string | null;
+  /** @nullable */
+  closedAt: string | null;
+  timeline: EmergencyEvent[];
+};
+
+export type EmergencyDetail = EmergencyListItem & EmergencyDetailAllOf;
+
+/**
+ * Server-derived, active-incident counts — every field a fresh aggregate query over the caller's own authorized scope, never a client-supplied or cached number.
+
+ */
+export interface EmergencyStatistics {
+  active: number;
+  critical: number;
+  open: number;
+  acknowledged: number;
+  inProgress: number;
+  resolvedToday: number;
+}
+
+/**
+ * Phase 4, Prompt 11 — Health Operations Center's own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path/domain doc comments for the full reconnaissance).
+
+ */
+export type HealthCaseCategory = typeof HealthCaseCategory[keyof typeof HealthCaseCategory];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const HealthCaseCategory = {
+  hospital_admission: 'hospital_admission',
+  medical_observation: 'medical_observation',
+  emergency_admission: 'emergency_admission',
+  outpatient_visit: 'outpatient_visit',
+  discharge: 'discharge',
+  medical_follow_up: 'medical_follow_up',
+  accident: 'accident',
+  other_medical_event: 'other_medical_event',
+} as const;
+
+/**
+ * Reuses the Emergency Operations Center's own severity vocabulary directly (no competing concept).
+
+ */
+export type HealthCaseSeverity = typeof HealthCaseSeverity[keyof typeof HealthCaseSeverity];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const HealthCaseSeverity = {
+  critical: 'critical',
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
+  informational: 'informational',
+} as const;
+
+/**
+ * The Health Operations Center's own 8-state lifecycle — materially different from the EOC's 5-state open->closed matrix (monitoring/ awaiting_update/admission/discharge concepts have no EOC equivalent).
+
+ */
+export type HealthCaseStatus = typeof HealthCaseStatus[keyof typeof HealthCaseStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const HealthCaseStatus = {
+  new: 'new',
+  acknowledged: 'acknowledged',
+  monitoring: 'monitoring',
+  awaiting_update: 'awaiting_update',
+  resolved: 'resolved',
+  discharged: 'discharged',
+  closed: 'closed',
+  cancelled: 'cancelled',
+} as const;
+
+export type HealthCaseEventType = typeof HealthCaseEventType[keyof typeof HealthCaseEventType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const HealthCaseEventType = {
+  created: 'created',
+  acknowledged: 'acknowledged',
+  monitoring_started: 'monitoring_started',
+  awaiting_update: 'awaiting_update',
+  update_received: 'update_received',
+  note_added: 'note_added',
+  resolved: 'resolved',
+  discharge_recorded: 'discharge_recorded',
+  closed: 'closed',
+  cancelled: 'cancelled',
+} as const;
+
+/**
+ * One immutable health_case_events row — this domain's own operational timeline (mirrors EmergencyEvent's shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.
+
+ */
+export interface HealthCaseEvent {
+  id: string;
+  eventType: HealthCaseEventType;
+  /** @nullable */
+  note: string | null;
+  /** @nullable */
+  actorStaffName: string | null;
+  occurredAt: string;
+}
+
+/**
+ * Deliberately minimal student identification (name/roll number/ hostel/room) — reused DISPLAY fields only, never a duplicated guardian/leave query. Use "Open Student Profile" (the existing Student Operations Center) for anything more.
+
+ */
+export interface HealthCaseListItem {
+  id: string;
+  studentId: string;
+  studentFullName: string;
+  studentRollNumber: string;
+  /** @nullable */
+  hostelId: string | null;
+  /** @nullable */
+  hostelName: string | null;
+  /** @nullable */
+  roomNumber: string | null;
+  category: HealthCaseCategory;
+  severity: HealthCaseSeverity;
+  status: HealthCaseStatus;
+  reportedAt: string;
+  /** @nullable */
+  admittedAt: string | null;
+  latestUpdateAt: string;
+  /** @nullable */
+  assignedStaffId: string | null;
+  /** @nullable */
+  assignedStaffName: string | null;
+}
+
+export interface HealthCaseList {
+  items: HealthCaseListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export type HealthCaseDetailAllOf = {
+  /** @nullable */
+  description: string | null;
+  /** @nullable */
+  resolvedAt: string | null;
+  /** @nullable */
+  dischargedAt: string | null;
+  /** @nullable */
+  closedAt: string | null;
+  /** @nullable */
+  cancelledAt: string | null;
+  timeline: HealthCaseEvent[];
+};
+
+export type HealthCaseDetail = HealthCaseListItem & HealthCaseDetailAllOf;
+
+/**
+ * Server-derived counts — every field a fresh aggregate query over the caller's own authorized scope, never a client-supplied or cached number.
+
+ */
+export interface HealthCaseStatistics {
+  active: number;
+  critical: number;
+  newCases: number;
+  monitoring: number;
+  awaitingUpdate: number;
+  admittedToday: number;
+  dischargedToday: number;
+}
+
+/**
+ * A normalized, presentation-layer grouping derived server-side from each audit_logs row's own `action` prefix (Phase 5, Prompt 12) — never a stored column. `staff-auth` covers the staff_sign_in_success/ mfa_success/mfa_failure/sign_out events; `other` covers any action that does not match a known module prefix (fails open to visibility, never silently dropped).
+
+ */
+export type AuditModule = typeof AuditModule[keyof typeof AuditModule];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AuditModule = {
+  leave: 'leave',
+  movement: 'movement',
+  emergency: 'emergency',
+  health: 'health',
+  device: 'device',
+  'staff-auth': 'staff-auth',
+  other: 'other',
+} as const;
+
+/**
+ * The audit_actor_type column's own real values — never invented.
+ */
+export type AuditActorType = typeof AuditActorType[keyof typeof AuditActorType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AuditActorType = {
+  student: 'student',
+  parent: 'parent',
+  staff: 'staff',
+  system: 'system',
+} as const;
+
+/**
+ * Every distinct entity_type value any module currently writes, confirmed by repository-wide search. trusted_devices and device_registration_challenges rows have no hostel concept at all and are therefore visible only to super_admin (see GET /audit's description).
+
+ */
+export type AuditEntityType = typeof AuditEntityType[keyof typeof AuditEntityType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const AuditEntityType = {
+  leave_requests: 'leave_requests',
+  security_incidents: 'security_incidents',
+  health_cases: 'health_cases',
+  staff: 'staff',
+  trusted_devices: 'trusted_devices',
+  device_registration_challenges: 'device_registration_challenges',
+} as const;
+
+export type AuditListItemMetadata = { [key: string]: unknown };
+
+/**
+ * One audit_logs row, with hostel/student/actor identity resolved server-side via a join back to the owning domain table — never a second, duplicated audit store. metadata is passed through unmodified from the authoritative row (never edited, never enriched with anything the writer didn't record).
+
+ */
+export interface AuditListItem {
+  id: string;
+  occurredAt: string;
+  action: string;
+  module: AuditModule;
+  actorType: AuditActorType;
+  /** @nullable */
+  actorId: string | null;
+  /** @nullable */
+  actorName: string | null;
+  /** @nullable */
+  actorRole: string | null;
+  entityType: string;
+  entityId: string;
+  /** @nullable */
+  studentId: string | null;
+  /** @nullable */
+  studentFullName: string | null;
+  /** @nullable */
+  studentRollNumber: string | null;
+  /** @nullable */
+  hostelId: string | null;
+  /** @nullable */
+  hostelName: string | null;
+  metadata: AuditListItemMetadata;
+}
+
+export interface AuditList {
+  items: AuditListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export type AuditStatisticsByModule = {
+  leave: number;
+  movement: number;
+  emergency: number;
+  health: number;
+  device: number;
+  'staff-auth': number;
+  other: number;
+};
+
+/**
+ * Server-derived, today-scoped event counts, grouped by module — every field a fresh aggregate query over the caller's own authorized scope, never a client-supplied or cached number.
+
+ */
+export interface AuditStatistics {
+  eventsToday: number;
+  byModule: AuditStatisticsByModule;
+}
+
+/**
+ * The real `staff_role` database enum values — never invented.
+ */
+export type StaffAdminRole = typeof StaffAdminRole[keyof typeof StaffAdminRole];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StaffAdminRole = {
+  reception_warden: 'reception_warden',
+  library_incharge: 'library_incharge',
+  hostel_admin: 'hostel_admin',
+  super_admin: 'super_admin',
+} as const;
+
+/**
+ * Phase 5, Prompt 13 — the minimal, safe lifecycle representation `staff.status` actually supports. Enforcement is request-time, not merely cosmetic (see `GET /staff`'s description).
+
+ */
+export type StaffAdminStatus = typeof StaffAdminStatus[keyof typeof StaffAdminStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StaffAdminStatus = {
+  active: 'active',
+  suspended: 'suspended',
+} as const;
+
+/**
+ * One `staff` row, with `email` resolved via a join to `auth.users` (the authoritative source for staff email — `staff` itself has no email column).
+
+ */
+export interface StaffAdmin {
+  id: string;
+  fullName: string;
+  /** @nullable */
+  email: string | null;
+  role: StaffAdminRole;
+  /** @nullable */
+  hostelId: string | null;
+  /** @nullable */
+  hostelName: string | null;
+  status: StaffAdminStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StaffList {
+  items: StaffAdmin[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export type StaffStatisticsByRole = {
+  reception_warden: number;
+  library_incharge: number;
+  hostel_admin: number;
+  super_admin: number;
+};
+
+/**
+ * Server-derived counts — every field a fresh aggregate query, never a client-supplied or cached number.
+
+ */
+export interface StaffStatistics {
+  totalStaff: number;
+  activeStaff: number;
+  suspendedStaff: number;
+  byRole: StaffStatisticsByRole;
+}
+
+/**
+ * Phase 5, Prompt 14 — the fixed, application-validated allow-list (`configuration_entries.domain` is `text`, not a database enum; `GET /configuration/domains` is this list's real runtime source).
+
+ */
+export type ConfigurationDomain = typeof ConfigurationDomain[keyof typeof ConfigurationDomain];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ConfigurationDomain = {
+  hostel: 'hostel',
+  approval: 'approval',
+  movement: 'movement',
+  emergency: 'emergency',
+  health: 'health',
+  notification: 'notification',
+  system: 'system',
+  feature_flags: 'feature_flags',
+} as const;
+
+export type ConfigurationScope = typeof ConfigurationScope[keyof typeof ConfigurationScope];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ConfigurationScope = {
+  global: 'global',
+  hostel: 'hostel',
+} as const;
+
+/**
+ * Drives server-side value validation and the editor's type-aware input control.
+ */
+export type ConfigurationValueType = typeof ConfigurationValueType[keyof typeof ConfigurationValueType];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ConfigurationValueType = {
+  string: 'string',
+  number: 'number',
+  boolean: 'boolean',
+  json: 'json',
+} as const;
+
+/**
+ * One `configuration_entries` row. `value`'s JSON shape is validated server-side against `valueType` on every write (`POST`/`PATCH`) — never merely a client-side convention.
+
+ */
+export interface ConfigurationEntry {
+  id: string;
+  domain: ConfigurationDomain;
+  key: string;
+  value: unknown;
+  valueType: ConfigurationValueType;
+  /** @nullable */
+  description: string | null;
+  scope: ConfigurationScope;
+  /** @nullable */
+  hostelId: string | null;
+  /** @nullable */
+  hostelName: string | null;
+  isActive: boolean;
+  /** Optimistic-concurrency token — pass back as `expectedVersion` on `PATCH`. */
+  version: number;
+  /** @nullable */
+  createdBy: string | null;
+  /** @nullable */
+  createdByName: string | null;
+  /** @nullable */
+  updatedBy: string | null;
+  /** @nullable */
+  updatedByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConfigurationList {
+  items: ConfigurationEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export type ConfigurationStatisticsByDomain = {
+  hostel: number;
+  approval: number;
+  movement: number;
+  emergency: number;
+  health: number;
+  notification: number;
+  system: number;
+  feature_flags: number;
+};
+
+/**
+ * Server-derived counts, within the caller's own hostel scope.
+ */
+export interface ConfigurationStatistics {
+  totalEntries: number;
+  activeEntries: number;
+  inactiveEntries: number;
+  byDomain: ConfigurationStatisticsByDomain;
+}
+
+export type ConfigurationValidationResultKind = typeof ConfigurationValidationResultKind[keyof typeof ConfigurationValidationResultKind];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ConfigurationValidationResultKind = {
+  valid: 'valid',
+  invalid_hostel: 'invalid_hostel',
+  hostel_required_for_scope: 'hostel_required_for_scope',
+  hostel_not_permitted_for_scope: 'hostel_not_permitted_for_scope',
+  invalid_value: 'invalid_value',
+  invalid_key: 'invalid_key',
+} as const;
+
+/**
+ * `valid: true` iff `kind` was `"valid"`; `reason` is populated only for the two outcomes that carry a human-readable explanation (`invalid_value`/`invalid_key`) — the others are self-explanatory from `kind` alone.
+
+ */
+export interface ConfigurationValidationResult {
+  valid: boolean;
+  kind?: ConfigurationValidationResultKind;
+  /** @nullable */
+  reason?: string | null;
 }
 
 /**
@@ -243,6 +1079,350 @@ export type ConflictResponse = ErrorBody;
  * Request body/params failed validation
  */
 export type ValidationErrorResponse = ErrorBody;
+
+export type ListEmergenciesParams = {
+/**
+ * @maxLength 200
+ */
+q?: string;
+category?: EmergencyCategory[];
+severity?: EmergencySeverity[];
+status?: EmergencyStatus[];
+activeOnly?: boolean;
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+pageSize?: number;
+sortBy?: ListEmergenciesSortBy;
+sortDir?: ListEmergenciesSortDir;
+};
+
+export type ListEmergenciesSortBy = typeof ListEmergenciesSortBy[keyof typeof ListEmergenciesSortBy];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListEmergenciesSortBy = {
+  reportedAt: 'reportedAt',
+  severity: 'severity',
+} as const;
+
+export type ListEmergenciesSortDir = typeof ListEmergenciesSortDir[keyof typeof ListEmergenciesSortDir];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListEmergenciesSortDir = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type ReportEmergencyBody = {
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  rollNumber: string;
+  category: EmergencyCategory;
+  severity: EmergencySeverity;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  description: string;
+};
+
+export type AddEmergencyNoteBody = {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  note: string;
+};
+
+export type ListHealthCasesParams = {
+/**
+ * @maxLength 200
+ */
+q?: string;
+/**
+ * Prompt 11 closure (Medical History) — restricts the list to one student's own cases, still fully hostel-scoped. Used by the Health Case Detail page's read-only "Medical History" section to list a student's other cases from this same authoritative table — never a second, duplicated history store.
+
+ */
+studentId?: string;
+category?: HealthCaseCategory[];
+severity?: HealthCaseSeverity[];
+status?: HealthCaseStatus[];
+activeOnly?: boolean;
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+pageSize?: number;
+sortBy?: ListHealthCasesSortBy;
+sortDir?: ListHealthCasesSortDir;
+};
+
+export type ListHealthCasesSortBy = typeof ListHealthCasesSortBy[keyof typeof ListHealthCasesSortBy];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListHealthCasesSortBy = {
+  reportedAt: 'reportedAt',
+  severity: 'severity',
+} as const;
+
+export type ListHealthCasesSortDir = typeof ListHealthCasesSortDir[keyof typeof ListHealthCasesSortDir];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListHealthCasesSortDir = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type ReportHealthCaseBody = {
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  rollNumber: string;
+  category: HealthCaseCategory;
+  severity: HealthCaseSeverity;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  description: string;
+};
+
+export type AddHealthCaseNoteBody = {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  note: string;
+};
+
+export type SearchStudentsParams = {
+/**
+ * @maxLength 200
+ */
+q?: string;
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+pageSize?: number;
+sortBy?: SearchStudentsSortBy;
+sortDir?: SearchStudentsSortDir;
+};
+
+export type SearchStudentsSortBy = typeof SearchStudentsSortBy[keyof typeof SearchStudentsSortBy];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SearchStudentsSortBy = {
+  fullName: 'fullName',
+  rollNumber: 'rollNumber',
+} as const;
+
+export type SearchStudentsSortDir = typeof SearchStudentsSortDir[keyof typeof SearchStudentsSortDir];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SearchStudentsSortDir = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type ListAuditEventsParams = {
+/**
+ * @maxLength 200
+ */
+q?: string;
+module?: AuditModule[];
+actorType?: AuditActorType[];
+entityType?: AuditEntityType[];
+dateFrom?: string;
+dateTo?: string;
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+pageSize?: number;
+sortDir?: ListAuditEventsSortDir;
+};
+
+export type ListAuditEventsSortDir = typeof ListAuditEventsSortDir[keyof typeof ListAuditEventsSortDir];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListAuditEventsSortDir = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type ListStaffParams = {
+/**
+ * @maxLength 200
+ */
+q?: string;
+role?: StaffAdminRole[];
+status?: StaffAdminStatus[];
+hostelId?: string[];
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+pageSize?: number;
+sortDir?: ListStaffSortDir;
+};
+
+export type ListStaffSortDir = typeof ListStaffSortDir[keyof typeof ListStaffSortDir];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListStaffSortDir = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type CreateStaffBody = {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  fullName: string;
+  /** @maxLength 255 */
+  email: string;
+  role: StaffAdminRole;
+  /**
+   * Required (non-null) for reception_warden/hostel_admin — their entire authority is hostel-scoped. May be null for library_incharge/super_admin.
+
+   * @nullable
+   */
+  hostelId: string | null;
+};
+
+export type ChangeStaffRoleBody = {
+  role: StaffAdminRole;
+};
+
+export type ChangeStaffHostelBody = {
+  /** @nullable */
+  hostelId: string | null;
+};
+
+export type ChangeStaffStatusBody = {
+  status: StaffAdminStatus;
+};
+
+export type ResetStaffPassword202 = {
+  status: string;
+};
+
+export type ForceSignOutStaff202 = {
+  status: string;
+};
+
+export type ListConfigurationDomains200 = {
+  domains: ConfigurationDomain[];
+};
+
+export type ValidateConfigurationBody = {
+  domain: ConfigurationDomain;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  key: string;
+  value: unknown;
+  valueType: ConfigurationValueType;
+  scope: ConfigurationScope;
+  /** @nullable */
+  hostelId: string | null;
+};
+
+export type ListConfigurationParams = {
+domain?: ConfigurationDomain[];
+scope?: ConfigurationScope[];
+hostelId?: string[];
+isActive?: boolean;
+/**
+ * @maxLength 200
+ */
+q?: string;
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 50
+ */
+pageSize?: number;
+sortDir?: ListConfigurationSortDir;
+};
+
+export type ListConfigurationSortDir = typeof ListConfigurationSortDir[keyof typeof ListConfigurationSortDir];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListConfigurationSortDir = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type CreateConfigurationEntryBody = {
+  domain: ConfigurationDomain;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  key: string;
+  value: unknown;
+  valueType: ConfigurationValueType;
+  /**
+   * @maxLength 2000
+   * @nullable
+   */
+  description?: string | null;
+  scope: ConfigurationScope;
+  /** @nullable */
+  hostelId: string | null;
+};
+
+export type UpdateConfigurationEntryBody = {
+  /** @minimum 1 */
+  expectedVersion: number;
+  value?: unknown;
+  /**
+   * @maxLength 2000
+   * @nullable
+   */
+  description?: string | null;
+  isActive?: boolean;
+};
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -532,6 +1712,215 @@ export const useVerifyOtp = <TError = ValidationErrorResponse | ErrorBody,
     }
     
 /**
+ * Staff password sign-in and native TOTP MFA happen via direct browser-to-Supabase-Auth calls (ADR-024) — this backend never observes them as they happen. This endpoint lets the already- authenticated caller report that one occurred, so it lands in DigiHostel's own audit_logs trail (not just Supabase's internal auth.audit_log_entries, which already captures the raw attempt regardless of this endpoint). Only events a caller can report while still holding a valid bearer token are supported here — sign-in-failure and session-expiry events have no valid token to authenticate the report with, and are covered by Supabase's own auth.audit_log_entries instead (see apps/reception-dashboard/docs/authorization.md).
+
+ * @summary Record a staff authentication event in the audit trail (Reception Dashboard Prompt 1 — Authentication Infrastructure)
+
+ */
+export const recordStaffAuthEvent = (
+    staffAuthEventBody: StaffAuthEventBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<void>(
+      {url: `/auth/staff/audit-events`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: staffAuthEventBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getRecordStaffAuthEventMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordStaffAuthEvent>>, TError,{data: StaffAuthEventBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordStaffAuthEvent>>, TError,{data: StaffAuthEventBody}, TContext> => {
+
+const mutationKey = ['recordStaffAuthEvent'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordStaffAuthEvent>>, {data: StaffAuthEventBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  recordStaffAuthEvent(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordStaffAuthEventMutationResult = NonNullable<Awaited<ReturnType<typeof recordStaffAuthEvent>>>
+    export type RecordStaffAuthEventMutationBody = StaffAuthEventBody
+    export type RecordStaffAuthEventMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+    /**
+ * @summary Record a staff authentication event in the audit trail (Reception Dashboard Prompt 1 — Authentication Infrastructure)
+
+ */
+export const useRecordStaffAuthEvent = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordStaffAuthEvent>>, TError,{data: StaffAuthEventBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordStaffAuthEvent>>,
+        TError,
+        {data: StaffAuthEventBody},
+        TContext
+      > => {
+
+      const mutationOptions = getRecordStaffAuthEventMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Server-controlled first step of trusted-device registration: issues a single-use, short-lived, cryptographically random nonce bound to the caller's own parent identity. The client passes this nonce into the platform attestation call (Play Integrity on Android) and submits the resulting token to POST /devices/register — the client is never the authority for the challenge value itself.
+
+ * @summary Request a device-registration challenge (ADR-003 implementation)
+
+ */
+export const requestDeviceChallenge = (
+    requestDeviceChallengeBody: RequestDeviceChallengeBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<DeviceChallenge>(
+      {url: `/devices/challenge`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: requestDeviceChallengeBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getRequestDeviceChallengeMutationOptions = <TError = ValidationErrorResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestDeviceChallenge>>, TError,{data: RequestDeviceChallengeBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestDeviceChallenge>>, TError,{data: RequestDeviceChallengeBody}, TContext> => {
+
+const mutationKey = ['requestDeviceChallenge'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestDeviceChallenge>>, {data: RequestDeviceChallengeBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestDeviceChallenge(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestDeviceChallengeMutationResult = NonNullable<Awaited<ReturnType<typeof requestDeviceChallenge>>>
+    export type RequestDeviceChallengeMutationBody = RequestDeviceChallengeBody
+    export type RequestDeviceChallengeMutationError = ValidationErrorResponse | ErrorBody
+
+    /**
+ * @summary Request a device-registration challenge (ADR-003 implementation)
+
+ */
+export const useRequestDeviceChallenge = <TError = ValidationErrorResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestDeviceChallenge>>, TError,{data: RequestDeviceChallengeBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof requestDeviceChallenge>>,
+        TError,
+        {data: RequestDeviceChallengeBody},
+        TContext
+      > => {
+
+      const mutationOptions = getRequestDeviceChallengeMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Redeems a previously-issued, single-use challenge and verifies the submitted attestation token server-side (Google Play Integrity Standard API on Android) before ever creating a trusted_devices row. The client can never self-declare trust — every outcome other than a genuine, server-verified PASS leaves the device untrusted.
+
+ * @summary Submit platform attestation to complete device registration (ADR-003 implementation)
+
+ */
+export const registerDevice = (
+    registerDeviceBody: RegisterDeviceBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<TrustedDevice>(
+      {url: `/devices/register`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: registerDeviceBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getRegisterDeviceMutationOptions = <TError = ValidationErrorResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerDevice>>, TError,{data: RegisterDeviceBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof registerDevice>>, TError,{data: RegisterDeviceBody}, TContext> => {
+
+const mutationKey = ['registerDevice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof registerDevice>>, {data: RegisterDeviceBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  registerDevice(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegisterDeviceMutationResult = NonNullable<Awaited<ReturnType<typeof registerDevice>>>
+    export type RegisterDeviceMutationBody = RegisterDeviceBody
+    export type RegisterDeviceMutationError = ValidationErrorResponse | ErrorBody
+
+    /**
+ * @summary Submit platform attestation to complete device registration (ADR-003 implementation)
+
+ */
+export const useRegisterDevice = <TError = ValidationErrorResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerDevice>>, TError,{data: RegisterDeviceBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof registerDevice>>,
+        TError,
+        {data: RegisterDeviceBody},
+        TContext
+      > => {
+
+      const mutationOptions = getRegisterDeviceMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Creates the request in its initial `pending` state only — this does NOT notify a parent/guardian, and does NOT schedule any escalation job (Reception-Initiated Parent Approval correction). Parent involvement begins only once an authorized staff member explicitly calls `POST /leave-requests/{leaveRequestId}/send-for-parent-approval`.
+
  * @summary Create a leave request (authenticated student, for themselves only)
  */
 export const createLeaveRequest = (
@@ -670,6 +2059,79 @@ export function useListLeaveRequests<TData = Awaited<ReturnType<typeof listLeave
 
 
 /**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant on leave_requests and receives 403, matching POST /leave-requests/{leaveRequestId}/expire's existing role set. reception_warden and hostel_admin see only leave requests belonging to students in their own assigned hostel, resolved entirely server-side from the authenticated caller's own staff row — never a client-supplied filter; super_admin sees every hostel's requests. Ordered newest-created first, with the leave request id as a stable secondary sort key so realtime updates never reorder unrelated rows. Each item is enriched with the minimum student/hostel/room context the queue table needs (roll number, full name, hostel name, room number) via existing, already-authorized joins — never any parent identity, contact detail, or SAP/mentor-approval data, neither of which this endpoint has any access to.
+
+ * @summary Staff-only: the Reception Dashboard's operational leave-request queue (Phase 3, Prompt 7A)
+
+ */
+export const listStaffLeaveQueue = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<StaffLeaveQueueItem[]>(
+      {url: `/leave-requests/queue`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListStaffLeaveQueueQueryKey = () => {
+    return [
+    `/leave-requests/queue`
+    ] as const;
+    }
+
+    
+export const getListStaffLeaveQueueQueryOptions = <TData = Awaited<ReturnType<typeof listStaffLeaveQueue>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStaffLeaveQueue>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListStaffLeaveQueueQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listStaffLeaveQueue>>> = ({ signal }) => listStaffLeaveQueue(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listStaffLeaveQueue>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListStaffLeaveQueueQueryResult = NonNullable<Awaited<ReturnType<typeof listStaffLeaveQueue>>>
+export type ListStaffLeaveQueueQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Staff-only: the Reception Dashboard's operational leave-request queue (Phase 3, Prompt 7A)
+
+ */
+
+export function useListStaffLeaveQueue<TData = Awaited<ReturnType<typeof listStaffLeaveQueue>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStaffLeaveQueue>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListStaffLeaveQueueQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * @summary Get a leave request — authenticated owning student, or authenticated parent/guardian (relationship-checked)
 
  */
@@ -741,7 +2203,7 @@ export function useGetLeaveRequest<TData = Awaited<ReturnType<typeof getLeaveReq
 
 
 /**
- * @summary Get a leave request's immutable approval-event timeline (Approval History) — authenticated owning student, or authenticated parent/guardian (relationship-checked). Same authorization/anti- enumeration shape as GET /leave-requests/{leaveRequestId}.
+ * @summary Get a leave request's immutable approval-event timeline (Approval History / Parent Approval Session Workspace) — authenticated owning student, authenticated parent/guardian (relationship-checked), or authenticated staff (reception_warden/hostel_admin/super_admin, AAL2-required, hostel-scoped). Same authorization/anti-enumeration shape as GET /leave-requests/{leaveRequestId} for student/parent; staff access mirrors GET /leave-requests/queue's hostel-scoping (Phase 3 Prompt 7B).
 
  */
 export const listLeaveRequestEvents = (
@@ -789,7 +2251,7 @@ export type ListLeaveRequestEventsQueryError = UnauthenticatedResponse | Forbidd
 
 
 /**
- * @summary Get a leave request's immutable approval-event timeline (Approval History) — authenticated owning student, or authenticated parent/guardian (relationship-checked). Same authorization/anti- enumeration shape as GET /leave-requests/{leaveRequestId}.
+ * @summary Get a leave request's immutable approval-event timeline (Approval History / Parent Approval Session Workspace) — authenticated owning student, authenticated parent/guardian (relationship-checked), or authenticated staff (reception_warden/hostel_admin/super_admin, AAL2-required, hostel-scoped). Same authorization/anti-enumeration shape as GET /leave-requests/{leaveRequestId} for student/parent; staff access mirrors GET /leave-requests/queue's hostel-scoping (Phase 3 Prompt 7B).
 
  */
 
@@ -944,6 +2406,73 @@ export const useRejectLeaveRequest = <TError = ValidationErrorResponse | Unauthe
     }
     
 /**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant on leave_requests and receives 403, matching every other staff-only leave-request transition. reception_warden/ hostel_admin are hostel-scoped to the leave request's own student; super_admin is unscoped. Conditionally transitions `pending` to the first real escalation stage — never any other current status, including a second concurrent call for the same leave request (the underlying conditional database UPDATE is what makes "exactly one caller can ever succeed" a server-enforced invariant, not a frontend one): a losing concurrent call, or any call against a request that is not currently `pending`, receives 409 Conflict.
+
+ * @summary Staff-only: explicitly transition a leave request from `pending` into the parent approval/escalation lifecycle (Reception-Initiated Parent Approval correction). Never automatic — creating a leave request (`POST /leave-requests`) no longer schedules this on its own; a Reception Warden/Hostel Admin/Super Admin must call this endpoint explicitly before any parent notification is dispatched.
+
+ */
+export const startParentApproval = (
+    leaveRequestId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<LeaveRequest>(
+      {url: `/leave-requests/${leaveRequestId}/send-for-parent-approval`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getStartParentApprovalMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startParentApproval>>, TError,{leaveRequestId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startParentApproval>>, TError,{leaveRequestId: string}, TContext> => {
+
+const mutationKey = ['startParentApproval'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startParentApproval>>, {leaveRequestId: string}> = (props) => {
+          const {leaveRequestId} = props ?? {};
+
+          return  startParentApproval(leaveRequestId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartParentApprovalMutationResult = NonNullable<Awaited<ReturnType<typeof startParentApproval>>>
+    
+    export type StartParentApprovalMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: explicitly transition a leave request from `pending` into the parent approval/escalation lifecycle (Reception-Initiated Parent Approval correction). Never automatic — creating a leave request (`POST /leave-requests`) no longer schedules this on its own; a Reception Warden/Hostel Admin/Super Admin must call this endpoint explicitly before any parent notification is dispatched.
+
+ */
+export const useStartParentApproval = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startParentApproval>>, TError,{leaveRequestId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startParentApproval>>,
+        TError,
+        {leaveRequestId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getStartParentApprovalMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
  * @summary Staff-only: explicitly mark a leave request expired from manual_verification (ADR-019 §2). Never automatic — no scheduled job may perform this transition.
 
  */
@@ -1004,6 +2533,3013 @@ export const useExpireLeaveRequest = <TError = ValidationErrorResponse | Unauthe
       > => {
 
       const mutationOptions = getExpireLeaveRequestMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant and receives 403, matching every other staff-only leave-request transition. reception_warden/hostel_admin are hostel-scoped to the leave request's own student; super_admin is unscoped. Requires the leave request to currently be `approved` (parent approval genuinely complete) and an explicit `identityConfirmed: true` body field — a staff attestation that the person at reception has been visually confirmed to match the student's identity; this cannot be independently re-verified by the server and is never defaulted or inferred. KIIT SAP mentor approval is NOT checked by this endpoint: no SAP integration exists anywhere in this system, so this endpoint never claims to have verified it — see apps/reception-dashboard/docs/exit-authorization.md. At most one exit authorization may ever exist per leave request — a second call (double-click, retry, or a losing concurrent request) receives 409 Conflict, enforced by a database-level uniqueness constraint, not merely application logic.
+
+ * @summary Staff-only: record that a student has physically left the hostel for an already-approved leave request (Phase 3, Prompt 7C — Student Verification & Exit Authorization). The final Reception-side checkpoint before departure.
+
+ */
+export const authorizeExit = (
+    leaveRequestId: string,
+    exitAuthorizationRequest: ExitAuthorizationRequest,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ExitAuthorization>(
+      {url: `/leave-requests/${leaveRequestId}/exit-authorization`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: exitAuthorizationRequest, signal
+    },
+      options);
+    }
+  
+
+
+export const getAuthorizeExitMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authorizeExit>>, TError,{leaveRequestId: string;data: ExitAuthorizationRequest}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authorizeExit>>, TError,{leaveRequestId: string;data: ExitAuthorizationRequest}, TContext> => {
+
+const mutationKey = ['authorizeExit'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authorizeExit>>, {leaveRequestId: string;data: ExitAuthorizationRequest}> = (props) => {
+          const {leaveRequestId,data} = props ?? {};
+
+          return  authorizeExit(leaveRequestId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthorizeExitMutationResult = NonNullable<Awaited<ReturnType<typeof authorizeExit>>>
+    export type AuthorizeExitMutationBody = ExitAuthorizationRequest
+    export type AuthorizeExitMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: record that a student has physically left the hostel for an already-approved leave request (Phase 3, Prompt 7C — Student Verification & Exit Authorization). The final Reception-side checkpoint before departure.
+
+ */
+export const useAuthorizeExit = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authorizeExit>>, TError,{leaveRequestId: string;data: ExitAuthorizationRequest}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authorizeExit>>,
+        TError,
+        {leaveRequestId: string;data: ExitAuthorizationRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getAuthorizeExitMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant and receives 403, matching every other staff-only leave-request transition. reception_warden/hostel_admin are hostel-scoped to the leave request's own student; super_admin is unscoped. Requires the leave request to currently be `approved` AND to already have a real exit authorization recorded (GET /students/{rollNumber}'s `currentLeave.exitAuthorized`) — "Exit Authorized" (a staff attestation) is this system's only authoritative record of departure; a return can never be recorded for a leave that was never actually exited. At most one hostel return may ever exist per leave request — a second call (double-click, retry, or a losing concurrent request) receives 409 Conflict, enforced by a database-level uniqueness constraint, not merely application logic. This action is part of the generic Movement Engine (packages/db/src/schema/movement.ts) but is the ONLY movement type currently implemented.
+
+ * @summary Staff-only: record that a student has physically returned to the hostel for an already-exited leave request (Phase 4, Prompt 9 — Student Movement Management System, Hostel Return)
+
+ */
+export const recordHostelReturn = (
+    leaveRequestId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HostelReturn>(
+      {url: `/leave-requests/${leaveRequestId}/return`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getRecordHostelReturnMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordHostelReturn>>, TError,{leaveRequestId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordHostelReturn>>, TError,{leaveRequestId: string}, TContext> => {
+
+const mutationKey = ['recordHostelReturn'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordHostelReturn>>, {leaveRequestId: string}> = (props) => {
+          const {leaveRequestId} = props ?? {};
+
+          return  recordHostelReturn(leaveRequestId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordHostelReturnMutationResult = NonNullable<Awaited<ReturnType<typeof recordHostelReturn>>>
+    
+    export type RecordHostelReturnMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: record that a student has physically returned to the hostel for an already-exited leave request (Phase 4, Prompt 9 — Student Movement Management System, Hostel Return)
+
+ */
+export const useRecordHostelReturn = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordHostelReturn>>, TError,{leaveRequestId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordHostelReturn>>,
+        TError,
+        {leaveRequestId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRecordHostelReturnMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Requires an AAL2 staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant. reception_warden/hostel_admin are hostel-scoped to their own assigned hostel, resolved entirely server-side; super_admin is unscoped. Only the 8 EOC emergency categories are ever returned — never the separate, still-unbuilt checkpoint-monitoring domain's `missed_checkpoint`/`manual_flag` rows. `q` matches a case-insensitive PREFIX against the linked student's full_name OR roll_number, mirroring `searchStudents`.
+
+ * @summary Staff-only: server-side paginated/filtered incident queue (Phase 4, Prompt 10 — Emergency Operations Center)
+
+ */
+export const listEmergencies = (
+    params?: ListEmergenciesParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyList>(
+      {url: `/emergencies`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListEmergenciesQueryKey = (params?: ListEmergenciesParams,) => {
+    return [
+    `/emergencies`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListEmergenciesQueryOptions = <TData = Awaited<ReturnType<typeof listEmergencies>>, TError = UnauthenticatedResponse | ForbiddenResponse>(params?: ListEmergenciesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEmergencies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListEmergenciesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEmergencies>>> = ({ signal }) => listEmergencies(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEmergencies>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListEmergenciesQueryResult = NonNullable<Awaited<ReturnType<typeof listEmergencies>>>
+export type ListEmergenciesQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Staff-only: server-side paginated/filtered incident queue (Phase 4, Prompt 10 — Emergency Operations Center)
+
+ */
+
+export function useListEmergencies<TData = Awaited<ReturnType<typeof listEmergencies>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+ params?: ListEmergenciesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listEmergencies>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListEmergenciesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * A genuine, honest reception-desk capability — a staff member records an incident they became aware of (phone call, walk-in report, direct observation). The intended Student Application "Emergency Trigger" producer described in the product roadmap does not exist anywhere in this repository (apps/student-mobile is an unmodified template scaffold) — this endpoint is not a substitute for that pipeline, it is the real staff-attestation path this table's original design already established (mirrors the existing `manual_flag` concept). `rollNumber` resolves the student server-side, hostel-scoped identically to every other staff route — never a client-supplied studentId/hostelId/staffId.
+
+ * @summary Staff-only: log a new incident report (Phase 4, Prompt 10)
+
+ */
+export const reportEmergency = (
+    reportEmergencyBody: ReportEmergencyBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyDetail>(
+      {url: `/emergencies`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: reportEmergencyBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getReportEmergencyMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reportEmergency>>, TError,{data: ReportEmergencyBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reportEmergency>>, TError,{data: ReportEmergencyBody}, TContext> => {
+
+const mutationKey = ['reportEmergency'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reportEmergency>>, {data: ReportEmergencyBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  reportEmergency(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReportEmergencyMutationResult = NonNullable<Awaited<ReturnType<typeof reportEmergency>>>
+    export type ReportEmergencyMutationBody = ReportEmergencyBody
+    export type ReportEmergencyMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | void
+
+    /**
+ * @summary Staff-only: log a new incident report (Phase 4, Prompt 10)
+
+ */
+export const useReportEmergency = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reportEmergency>>, TError,{data: ReportEmergencyBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reportEmergency>>,
+        TError,
+        {data: ReportEmergencyBody},
+        TContext
+      > => {
+
+      const mutationOptions = getReportEmergencyMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Every count is a fresh aggregate query over the caller's own authorized scope — never a client-supplied or cached number.
+
+ * @summary Staff-only: server-derived active-incident counts for the EOC's statistics strip (Phase 4, Prompt 10)
+
+ */
+export const getEmergencyStatistics = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyStatistics>(
+      {url: `/emergencies/statistics`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetEmergencyStatisticsQueryKey = () => {
+    return [
+    `/emergencies/statistics`
+    ] as const;
+    }
+
+    
+export const getGetEmergencyStatisticsQueryOptions = <TData = Awaited<ReturnType<typeof getEmergencyStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmergencyStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEmergencyStatisticsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEmergencyStatistics>>> = ({ signal }) => getEmergencyStatistics(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEmergencyStatistics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetEmergencyStatisticsQueryResult = NonNullable<Awaited<ReturnType<typeof getEmergencyStatistics>>>
+export type GetEmergencyStatisticsQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Staff-only: server-derived active-incident counts for the EOC's statistics strip (Phase 4, Prompt 10)
+
+ */
+
+export function useGetEmergencyStatistics<TData = Awaited<ReturnType<typeof getEmergencyStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmergencyStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetEmergencyStatisticsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Returns 404 for both "no such incident" and "exists but outside the caller's hostel scope" — anti-enumeration, matching every other staff detail route in this API.
+
+ * @summary Staff-only: single incident detail with operational timeline (Phase 4, Prompt 10)
+
+ */
+export const getEmergency = (
+    incidentId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyDetail>(
+      {url: `/emergencies/${incidentId}`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetEmergencyQueryKey = (incidentId?: string,) => {
+    return [
+    `/emergencies/${incidentId}`
+    ] as const;
+    }
+
+    
+export const getGetEmergencyQueryOptions = <TData = Awaited<ReturnType<typeof getEmergency>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(incidentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmergency>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEmergencyQueryKey(incidentId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEmergency>>> = ({ signal }) => getEmergency(incidentId, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(incidentId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEmergency>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetEmergencyQueryResult = NonNullable<Awaited<ReturnType<typeof getEmergency>>>
+export type GetEmergencyQueryError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+
+/**
+ * @summary Staff-only: single incident detail with operational timeline (Phase 4, Prompt 10)
+
+ */
+
+export function useGetEmergency<TData = Awaited<ReturnType<typeof getEmergency>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(
+ incidentId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmergency>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetEmergencyQueryOptions(incidentId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Server-authoritative transition, conditional on the incident's CURRENT status being exactly `open` (a conditional UPDATE ... WHERE status = 'open', the same deterministic, concurrency-safe pattern `decide()`/`markExpired()`/`recordHostelReturn()` already established) — a losing concurrent acknowledge receives 409, never a duplicate audit event. Acknowledging also self-assigns the incident to the caller's own resolved staff identity — never a client-supplied assignee.
+
+ * @summary Staff-only: acknowledge a new incident (open -> acknowledged)
+ */
+export const acknowledgeEmergency = (
+    incidentId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyDetail>(
+      {url: `/emergencies/${incidentId}/acknowledge`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getAcknowledgeEmergencyMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acknowledgeEmergency>>, TError,{incidentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof acknowledgeEmergency>>, TError,{incidentId: string}, TContext> => {
+
+const mutationKey = ['acknowledgeEmergency'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof acknowledgeEmergency>>, {incidentId: string}> = (props) => {
+          const {incidentId} = props ?? {};
+
+          return  acknowledgeEmergency(incidentId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AcknowledgeEmergencyMutationResult = NonNullable<Awaited<ReturnType<typeof acknowledgeEmergency>>>
+    
+    export type AcknowledgeEmergencyMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: acknowledge a new incident (open -> acknowledged)
+ */
+export const useAcknowledgeEmergency = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acknowledgeEmergency>>, TError,{incidentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof acknowledgeEmergency>>,
+        TError,
+        {incidentId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getAcknowledgeEmergencyMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: begin active response (acknowledged -> in_progress)
+ */
+export const startEmergencyResponse = (
+    incidentId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyDetail>(
+      {url: `/emergencies/${incidentId}/start-response`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getStartEmergencyResponseMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startEmergencyResponse>>, TError,{incidentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startEmergencyResponse>>, TError,{incidentId: string}, TContext> => {
+
+const mutationKey = ['startEmergencyResponse'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startEmergencyResponse>>, {incidentId: string}> = (props) => {
+          const {incidentId} = props ?? {};
+
+          return  startEmergencyResponse(incidentId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartEmergencyResponseMutationResult = NonNullable<Awaited<ReturnType<typeof startEmergencyResponse>>>
+    
+    export type StartEmergencyResponseMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: begin active response (acknowledged -> in_progress)
+ */
+export const useStartEmergencyResponse = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startEmergencyResponse>>, TError,{incidentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startEmergencyResponse>>,
+        TError,
+        {incidentId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getStartEmergencyResponseMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: mark an incident resolved (in_progress -> resolved)
+ */
+export const resolveEmergency = (
+    incidentId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyDetail>(
+      {url: `/emergencies/${incidentId}/resolve`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getResolveEmergencyMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveEmergency>>, TError,{incidentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveEmergency>>, TError,{incidentId: string}, TContext> => {
+
+const mutationKey = ['resolveEmergency'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveEmergency>>, {incidentId: string}> = (props) => {
+          const {incidentId} = props ?? {};
+
+          return  resolveEmergency(incidentId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveEmergencyMutationResult = NonNullable<Awaited<ReturnType<typeof resolveEmergency>>>
+    
+    export type ResolveEmergencyMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: mark an incident resolved (in_progress -> resolved)
+ */
+export const useResolveEmergency = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveEmergency>>, TError,{incidentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resolveEmergency>>,
+        TError,
+        {incidentId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getResolveEmergencyMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Terminal — a closed incident accepts no further transition or note (both return 409).
+
+ * @summary Staff-only: close a resolved incident (resolved -> closed)
+ */
+export const closeEmergency = (
+    incidentId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyDetail>(
+      {url: `/emergencies/${incidentId}/close`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getCloseEmergencyMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof closeEmergency>>, TError,{incidentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof closeEmergency>>, TError,{incidentId: string}, TContext> => {
+
+const mutationKey = ['closeEmergency'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof closeEmergency>>, {incidentId: string}> = (props) => {
+          const {incidentId} = props ?? {};
+
+          return  closeEmergency(incidentId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CloseEmergencyMutationResult = NonNullable<Awaited<ReturnType<typeof closeEmergency>>>
+    
+    export type CloseEmergencyMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: close a resolved incident (resolved -> closed)
+ */
+export const useCloseEmergency = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof closeEmergency>>, TError,{incidentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof closeEmergency>>,
+        TError,
+        {incidentId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getCloseEmergencyMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Allowed for any non-`closed` status. Immutable once written — this table (security_incident_events) mirrors leave_approval_events's append-only discipline exactly.
+
+ * @summary Staff-only: append an operational note to the incident timeline
+ */
+export const addEmergencyNote = (
+    incidentId: string,
+    addEmergencyNoteBody: AddEmergencyNoteBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<EmergencyEvent>(
+      {url: `/emergencies/${incidentId}/notes`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: addEmergencyNoteBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getAddEmergencyNoteMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addEmergencyNote>>, TError,{incidentId: string;data: AddEmergencyNoteBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addEmergencyNote>>, TError,{incidentId: string;data: AddEmergencyNoteBody}, TContext> => {
+
+const mutationKey = ['addEmergencyNote'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addEmergencyNote>>, {incidentId: string;data: AddEmergencyNoteBody}> = (props) => {
+          const {incidentId,data} = props ?? {};
+
+          return  addEmergencyNote(incidentId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddEmergencyNoteMutationResult = NonNullable<Awaited<ReturnType<typeof addEmergencyNote>>>
+    export type AddEmergencyNoteMutationBody = AddEmergencyNoteBody
+    export type AddEmergencyNoteMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: append an operational note to the incident timeline
+ */
+export const useAddEmergencyNote = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addEmergencyNote>>, TError,{incidentId: string;data: AddEmergencyNoteBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addEmergencyNote>>,
+        TError,
+        {incidentId: string;data: AddEmergencyNoteBody},
+        TContext
+      > => {
+
+      const mutationOptions = getAddEmergencyNoteMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Requires an AAL2 staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant (this table has no policy for that role at all). reception_warden/ hostel_admin are hostel-scoped to their own assigned hostel, resolved entirely server-side; super_admin is unscoped. `q` matches a case-insensitive PREFIX against the linked student's full_name OR roll_number, mirroring `searchStudents`/`listEmergencies`.
+
+ * @summary Staff-only: server-side paginated/filtered medical case queue (Phase 4, Prompt 11 — Health Operations Center)
+
+ */
+export const listHealthCases = (
+    params?: ListHealthCasesParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseList>(
+      {url: `/health-cases`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListHealthCasesQueryKey = (params?: ListHealthCasesParams,) => {
+    return [
+    `/health-cases`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListHealthCasesQueryOptions = <TData = Awaited<ReturnType<typeof listHealthCases>>, TError = UnauthenticatedResponse | ForbiddenResponse>(params?: ListHealthCasesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listHealthCases>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListHealthCasesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listHealthCases>>> = ({ signal }) => listHealthCases(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listHealthCases>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListHealthCasesQueryResult = NonNullable<Awaited<ReturnType<typeof listHealthCases>>>
+export type ListHealthCasesQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Staff-only: server-side paginated/filtered medical case queue (Phase 4, Prompt 11 — Health Operations Center)
+
+ */
+
+export function useListHealthCases<TData = Awaited<ReturnType<typeof listHealthCases>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+ params?: ListHealthCasesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listHealthCases>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListHealthCasesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * A genuine, honest reception-desk capability — a staff member records a medical case they became aware of. No real KIIMS/hospital-system producer exists anywhere in this repository — this endpoint is not a substitute for that future integration, it is the real staff-attestation path this domain's own design establishes (mirrors `reportEmergency`'s identical pattern). `rollNumber` resolves the student server-side, hostel-scoped identically to every other staff route — never a client-supplied studentId/hostelId/staffId/ admittedAt. `admittedAt` is set automatically, server-side, when `category` is `hospital_admission` or `emergency_admission`.
+
+ * @summary Staff-only: log a new medical case report (Phase 4, Prompt 11)
+
+ */
+export const reportHealthCase = (
+    reportHealthCaseBody: ReportHealthCaseBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: reportHealthCaseBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getReportHealthCaseMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reportHealthCase>>, TError,{data: ReportHealthCaseBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reportHealthCase>>, TError,{data: ReportHealthCaseBody}, TContext> => {
+
+const mutationKey = ['reportHealthCase'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reportHealthCase>>, {data: ReportHealthCaseBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  reportHealthCase(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReportHealthCaseMutationResult = NonNullable<Awaited<ReturnType<typeof reportHealthCase>>>
+    export type ReportHealthCaseMutationBody = ReportHealthCaseBody
+    export type ReportHealthCaseMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | void
+
+    /**
+ * @summary Staff-only: log a new medical case report (Phase 4, Prompt 11)
+
+ */
+export const useReportHealthCase = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | void,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reportHealthCase>>, TError,{data: ReportHealthCaseBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reportHealthCase>>,
+        TError,
+        {data: ReportHealthCaseBody},
+        TContext
+      > => {
+
+      const mutationOptions = getReportHealthCaseMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Every count is a fresh aggregate query over the caller's own authorized scope — never a client-supplied or cached number.
+
+ * @summary Staff-only: server-derived case counts for the Health Operations Center's statistics strip (Phase 4, Prompt 11)
+
+ */
+export const getHealthCaseStatistics = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseStatistics>(
+      {url: `/health-cases/statistics`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetHealthCaseStatisticsQueryKey = () => {
+    return [
+    `/health-cases/statistics`
+    ] as const;
+    }
+
+    
+export const getGetHealthCaseStatisticsQueryOptions = <TData = Awaited<ReturnType<typeof getHealthCaseStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHealthCaseStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetHealthCaseStatisticsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getHealthCaseStatistics>>> = ({ signal }) => getHealthCaseStatistics(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getHealthCaseStatistics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetHealthCaseStatisticsQueryResult = NonNullable<Awaited<ReturnType<typeof getHealthCaseStatistics>>>
+export type GetHealthCaseStatisticsQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Staff-only: server-derived case counts for the Health Operations Center's statistics strip (Phase 4, Prompt 11)
+
+ */
+
+export function useGetHealthCaseStatistics<TData = Awaited<ReturnType<typeof getHealthCaseStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHealthCaseStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetHealthCaseStatisticsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Returns 404 for both "no such case" and "exists but outside the caller's hostel scope" — anti-enumeration, matching every other staff detail route in this API.
+
+ * @summary Staff-only: single case detail with operational timeline (Phase 4, Prompt 11)
+
+ */
+export const getHealthCase = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetHealthCaseQueryKey = (caseId?: string,) => {
+    return [
+    `/health-cases/${caseId}`
+    ] as const;
+    }
+
+    
+export const getGetHealthCaseQueryOptions = <TData = Awaited<ReturnType<typeof getHealthCase>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(caseId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHealthCase>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetHealthCaseQueryKey(caseId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getHealthCase>>> = ({ signal }) => getHealthCase(caseId, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(caseId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getHealthCase>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetHealthCaseQueryResult = NonNullable<Awaited<ReturnType<typeof getHealthCase>>>
+export type GetHealthCaseQueryError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+
+/**
+ * @summary Staff-only: single case detail with operational timeline (Phase 4, Prompt 11)
+
+ */
+
+export function useGetHealthCase<TData = Awaited<ReturnType<typeof getHealthCase>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(
+ caseId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHealthCase>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetHealthCaseQueryOptions(caseId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Server-authoritative transition, conditional on the case's CURRENT status being exactly `new` — a losing concurrent acknowledge receives 409, never a duplicate event. Acknowledging also self-assigns the case to the caller's own resolved staff identity — never a client-supplied assignee.
+
+ * @summary Staff-only: acknowledge a new case (new -> acknowledged)
+ */
+export const acknowledgeHealthCase = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}/acknowledge`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getAcknowledgeHealthCaseMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acknowledgeHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof acknowledgeHealthCase>>, TError,{caseId: string}, TContext> => {
+
+const mutationKey = ['acknowledgeHealthCase'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof acknowledgeHealthCase>>, {caseId: string}> = (props) => {
+          const {caseId} = props ?? {};
+
+          return  acknowledgeHealthCase(caseId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AcknowledgeHealthCaseMutationResult = NonNullable<Awaited<ReturnType<typeof acknowledgeHealthCase>>>
+    
+    export type AcknowledgeHealthCaseMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: acknowledge a new case (new -> acknowledged)
+ */
+export const useAcknowledgeHealthCase = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acknowledgeHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof acknowledgeHealthCase>>,
+        TError,
+        {caseId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getAcknowledgeHealthCaseMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: cancel a new case as a false alarm/duplicate (new -> cancelled)
+ */
+export const cancelHealthCase = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}/cancel`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getCancelHealthCaseMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelHealthCase>>, TError,{caseId: string}, TContext> => {
+
+const mutationKey = ['cancelHealthCase'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelHealthCase>>, {caseId: string}> = (props) => {
+          const {caseId} = props ?? {};
+
+          return  cancelHealthCase(caseId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelHealthCaseMutationResult = NonNullable<Awaited<ReturnType<typeof cancelHealthCase>>>
+    
+    export type CancelHealthCaseMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: cancel a new case as a false alarm/duplicate (new -> cancelled)
+ */
+export const useCancelHealthCase = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelHealthCase>>,
+        TError,
+        {caseId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getCancelHealthCaseMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: begin active monitoring (acknowledged -> monitoring)
+ */
+export const startHealthCaseMonitoring = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}/start-monitoring`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getStartHealthCaseMonitoringMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startHealthCaseMonitoring>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startHealthCaseMonitoring>>, TError,{caseId: string}, TContext> => {
+
+const mutationKey = ['startHealthCaseMonitoring'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startHealthCaseMonitoring>>, {caseId: string}> = (props) => {
+          const {caseId} = props ?? {};
+
+          return  startHealthCaseMonitoring(caseId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartHealthCaseMonitoringMutationResult = NonNullable<Awaited<ReturnType<typeof startHealthCaseMonitoring>>>
+    
+    export type StartHealthCaseMonitoringMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: begin active monitoring (acknowledged -> monitoring)
+ */
+export const useStartHealthCaseMonitoring = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startHealthCaseMonitoring>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startHealthCaseMonitoring>>,
+        TError,
+        {caseId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getStartHealthCaseMonitoringMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: mark a monitored case as waiting on an external update (monitoring -> awaiting_update)
+ */
+export const markHealthCaseAwaitingUpdate = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}/mark-awaiting-update`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getMarkHealthCaseAwaitingUpdateMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markHealthCaseAwaitingUpdate>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markHealthCaseAwaitingUpdate>>, TError,{caseId: string}, TContext> => {
+
+const mutationKey = ['markHealthCaseAwaitingUpdate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markHealthCaseAwaitingUpdate>>, {caseId: string}> = (props) => {
+          const {caseId} = props ?? {};
+
+          return  markHealthCaseAwaitingUpdate(caseId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkHealthCaseAwaitingUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof markHealthCaseAwaitingUpdate>>>
+    
+    export type MarkHealthCaseAwaitingUpdateMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: mark a monitored case as waiting on an external update (monitoring -> awaiting_update)
+ */
+export const useMarkHealthCaseAwaitingUpdate = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markHealthCaseAwaitingUpdate>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markHealthCaseAwaitingUpdate>>,
+        TError,
+        {caseId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getMarkHealthCaseAwaitingUpdateMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: resume monitoring after receiving an update (awaiting_update -> monitoring)
+ */
+export const resumeHealthCaseMonitoring = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}/resume-monitoring`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getResumeHealthCaseMonitoringMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resumeHealthCaseMonitoring>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resumeHealthCaseMonitoring>>, TError,{caseId: string}, TContext> => {
+
+const mutationKey = ['resumeHealthCaseMonitoring'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resumeHealthCaseMonitoring>>, {caseId: string}> = (props) => {
+          const {caseId} = props ?? {};
+
+          return  resumeHealthCaseMonitoring(caseId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResumeHealthCaseMonitoringMutationResult = NonNullable<Awaited<ReturnType<typeof resumeHealthCaseMonitoring>>>
+    
+    export type ResumeHealthCaseMonitoringMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: resume monitoring after receiving an update (awaiting_update -> monitoring)
+ */
+export const useResumeHealthCaseMonitoring = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resumeHealthCaseMonitoring>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resumeHealthCaseMonitoring>>,
+        TError,
+        {caseId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getResumeHealthCaseMonitoringMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: mark a monitored case resolved without admission (monitoring -> resolved)
+ */
+export const resolveHealthCase = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}/resolve`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getResolveHealthCaseMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveHealthCase>>, TError,{caseId: string}, TContext> => {
+
+const mutationKey = ['resolveHealthCase'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveHealthCase>>, {caseId: string}> = (props) => {
+          const {caseId} = props ?? {};
+
+          return  resolveHealthCase(caseId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveHealthCaseMutationResult = NonNullable<Awaited<ReturnType<typeof resolveHealthCase>>>
+    
+    export type ResolveHealthCaseMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: mark a monitored case resolved without admission (monitoring -> resolved)
+ */
+export const useResolveHealthCase = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resolveHealthCase>>,
+        TError,
+        {caseId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getResolveHealthCaseMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Staff-only: record discharge for an admitted, monitored case (monitoring -> discharged)
+ */
+export const dischargeHealthCase = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}/discharge`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getDischargeHealthCaseMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dischargeHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof dischargeHealthCase>>, TError,{caseId: string}, TContext> => {
+
+const mutationKey = ['dischargeHealthCase'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof dischargeHealthCase>>, {caseId: string}> = (props) => {
+          const {caseId} = props ?? {};
+
+          return  dischargeHealthCase(caseId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DischargeHealthCaseMutationResult = NonNullable<Awaited<ReturnType<typeof dischargeHealthCase>>>
+    
+    export type DischargeHealthCaseMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: record discharge for an admitted, monitored case (monitoring -> discharged)
+ */
+export const useDischargeHealthCase = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof dischargeHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof dischargeHealthCase>>,
+        TError,
+        {caseId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDischargeHealthCaseMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Terminal — a closed case accepts no further transition or note (both return 409).
+
+ * @summary Staff-only: close a resolved or discharged case (resolved|discharged -> closed)
+ */
+export const closeHealthCase = (
+    caseId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseDetail>(
+      {url: `/health-cases/${caseId}/close`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getCloseHealthCaseMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof closeHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof closeHealthCase>>, TError,{caseId: string}, TContext> => {
+
+const mutationKey = ['closeHealthCase'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof closeHealthCase>>, {caseId: string}> = (props) => {
+          const {caseId} = props ?? {};
+
+          return  closeHealthCase(caseId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CloseHealthCaseMutationResult = NonNullable<Awaited<ReturnType<typeof closeHealthCase>>>
+    
+    export type CloseHealthCaseMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: close a resolved or discharged case (resolved|discharged -> closed)
+ */
+export const useCloseHealthCase = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof closeHealthCase>>, TError,{caseId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof closeHealthCase>>,
+        TError,
+        {caseId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getCloseHealthCaseMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Allowed for any status except `closed`/`cancelled`. Immutable once written — this table (health_case_events) mirrors security_incident_events'/leave_approval_events' append-only discipline exactly.
+
+ * @summary Staff-only: append an operational note to the case timeline
+ */
+export const addHealthCaseNote = (
+    caseId: string,
+    addHealthCaseNoteBody: AddHealthCaseNoteBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<HealthCaseEvent>(
+      {url: `/health-cases/${caseId}/notes`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: addHealthCaseNoteBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getAddHealthCaseNoteMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addHealthCaseNote>>, TError,{caseId: string;data: AddHealthCaseNoteBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addHealthCaseNote>>, TError,{caseId: string;data: AddHealthCaseNoteBody}, TContext> => {
+
+const mutationKey = ['addHealthCaseNote'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addHealthCaseNote>>, {caseId: string;data: AddHealthCaseNoteBody}> = (props) => {
+          const {caseId,data} = props ?? {};
+
+          return  addHealthCaseNote(caseId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddHealthCaseNoteMutationResult = NonNullable<Awaited<ReturnType<typeof addHealthCaseNote>>>
+    export type AddHealthCaseNoteMutationBody = AddHealthCaseNoteBody
+    export type AddHealthCaseNoteMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
+ * @summary Staff-only: append an operational note to the case timeline
+ */
+export const useAddHealthCaseNote = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addHealthCaseNote>>, TError,{caseId: string;data: AddHealthCaseNoteBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addHealthCaseNote>>,
+        TError,
+        {caseId: string;data: AddHealthCaseNoteBody},
+        TContext
+      > => {
+
+      const mutationOptions = getAddHealthCaseNoteMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — matching every other certified staff-only leave/student route's role set and AAL2/hostel-scope shape exactly. reception_warden and hostel_admin see only students in their own assigned hostel, resolved entirely server-side from the authenticated caller's own staff row — never a client-supplied filter; super_admin is unscoped. `q`, when supplied, matches a case-insensitive PREFIX against full_name OR roll_number — the only two fields this system's authoritative `students` schema indexes for search; no department/program/gender/ phone/academic-year field exists anywhere in this schema; none is exposed. Deterministically ordered (the requested sort field plus the student's own id as a tie-breaker) and paginated server-side — never the caller's whole in-scope population downloaded and filtered client-side.
+
+ * @summary Staff-only: server-side student search (Phase 4, Prompt 8 — Student Operations Center)
+
+ */
+export const searchStudents = (
+    params?: SearchStudentsParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<StudentSearchResult>(
+      {url: `/students`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getSearchStudentsQueryKey = (params?: SearchStudentsParams,) => {
+    return [
+    `/students`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getSearchStudentsQueryOptions = <TData = Awaited<ReturnType<typeof searchStudents>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(params?: SearchStudentsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof searchStudents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getSearchStudentsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof searchStudents>>> = ({ signal }) => searchStudents(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof searchStudents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type SearchStudentsQueryResult = NonNullable<Awaited<ReturnType<typeof searchStudents>>>
+export type SearchStudentsQueryError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Staff-only: server-side student search (Phase 4, Prompt 8 — Student Operations Center)
+
+ */
+
+export function useSearchStudents<TData = Awaited<ReturnType<typeof searchStudents>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(
+ params?: SearchStudentsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof searchStudents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getSearchStudentsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Same AAL2/role/hostel-scope shape as GET /students. Returns only authoritative DigiHostel data — identity, hostel/room, linked parent/guardian contact (name, relationship, phone only — never internal ids or authentication identifiers), and the student's own most recent DigiHostel Hostel Leaving Request with its immutable approval-event timeline, reused unmutated from the certified Parent Approval / Exit Authorization workflow (never the separate KIIT SAP Holiday Request concept, which has no integration anywhere in this system). A roll number that does not exist, or that exists outside the caller's hostel scope, is deliberately indistinguishable (404, anti-enumeration) — identical shape to GET /leave-requests/{leaveRequestId}.
+
+ * @summary Staff-only: read-only student profile (Phase 4, Prompt 8 — Student Operations Center)
+
+ */
+export const getStudentProfile = (
+    rollNumber: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<StudentProfile>(
+      {url: `/students/${rollNumber}`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetStudentProfileQueryKey = (rollNumber?: string,) => {
+    return [
+    `/students/${rollNumber}`
+    ] as const;
+    }
+
+    
+export const getGetStudentProfileQueryOptions = <TData = Awaited<ReturnType<typeof getStudentProfile>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(rollNumber: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStudentProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStudentProfileQueryKey(rollNumber);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStudentProfile>>> = ({ signal }) => getStudentProfile(rollNumber, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(rollNumber), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStudentProfile>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStudentProfileQueryResult = NonNullable<Awaited<ReturnType<typeof getStudentProfile>>>
+export type GetStudentProfileQueryError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+
+/**
+ * @summary Staff-only: read-only student profile (Phase 4, Prompt 8 — Student Operations Center)
+
+ */
+
+export function useGetStudentProfile<TData = Awaited<ReturnType<typeof getStudentProfile>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(
+ rollNumber: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStudentProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStudentProfileQueryOptions(rollNumber,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Requires an AAL2 staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant on `audit:view`. `audit_logs` itself has zero client-facing RLS by design; this is the sole privileged, staff-authorized read path. `audit_logs` carries no hostel_id column — hostel scope is derived server-side per row by joining entity_id back to the owning domain table (leave_requests/security_incidents/health_cases -> students, or staff directly). Rows whose entity_type has no such join (trusted_devices, device_registration_challenges — parent-security events with no hostel concept) are visible only to super_admin. reception_warden/hostel_admin are hostel-scoped to their own assigned hostel, resolved entirely server-side; super_admin is unscoped. `q` matches a case-insensitive PREFIX against the resolved student's full_name/roll_number OR the resolved actor's name, mirroring `searchStudents`/`listEmergencies`.
+
+ * @summary Staff-only: server-side paginated/filtered read over audit_logs (Phase 5, Prompt 12 — Enterprise Audit Center)
+
+ */
+export const listAuditEvents = (
+    params?: ListAuditEventsParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<AuditList>(
+      {url: `/audit`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListAuditEventsQueryKey = (params?: ListAuditEventsParams,) => {
+    return [
+    `/audit`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListAuditEventsQueryOptions = <TData = Awaited<ReturnType<typeof listAuditEvents>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(params?: ListAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAuditEventsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAuditEvents>>> = ({ signal }) => listAuditEvents(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAuditEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listAuditEvents>>>
+export type ListAuditEventsQueryError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Staff-only: server-side paginated/filtered read over audit_logs (Phase 5, Prompt 12 — Enterprise Audit Center)
+
+ */
+
+export function useListAuditEvents<TData = Awaited<ReturnType<typeof listAuditEvents>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(
+ params?: ListAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAuditEventsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Same authorization/hostel-scope boundary as GET /audit. Every field is a fresh aggregate query over the caller's own authorized scope, never a client-supplied or cached number.
+
+ * @summary Staff-only: today's event counts within the caller's scope, by module (Phase 5, Prompt 12)
+
+ */
+export const getAuditStatistics = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<AuditStatistics>(
+      {url: `/audit/statistics`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetAuditStatisticsQueryKey = () => {
+    return [
+    `/audit/statistics`
+    ] as const;
+    }
+
+    
+export const getGetAuditStatisticsQueryOptions = <TData = Awaited<ReturnType<typeof getAuditStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuditStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAuditStatisticsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuditStatistics>>> = ({ signal }) => getAuditStatistics(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuditStatistics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAuditStatisticsQueryResult = NonNullable<Awaited<ReturnType<typeof getAuditStatistics>>>
+export type GetAuditStatisticsQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Staff-only: today's event counts within the caller's scope, by module (Phase 5, Prompt 12)
+
+ */
+
+export function useGetAuditStatistics<TData = Awaited<ReturnType<typeof getAuditStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuditStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAuditStatisticsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Requires an AAL2 super_admin session — the first super_admin-only endpoint in this API family (every other staff-facing route uses the standard reception_warden/hostel_admin/super_admin set). Matches `staff`'s own pre-existing `staff_all_super_admin` RLS grant exactly. `q` matches a case-insensitive PREFIX against full_name OR email.
+
+ * @summary super_admin-only: server-side paginated/filtered staff directory (Phase 5, Prompt 13 — Identity & Access Administration Center)
+
+ */
+export const listStaff = (
+    params?: ListStaffParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<StaffList>(
+      {url: `/staff`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListStaffQueryKey = (params?: ListStaffParams,) => {
+    return [
+    `/staff`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListStaffQueryOptions = <TData = Awaited<ReturnType<typeof listStaff>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(params?: ListStaffParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStaff>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListStaffQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listStaff>>> = ({ signal }) => listStaff(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listStaff>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListStaffQueryResult = NonNullable<Awaited<ReturnType<typeof listStaff>>>
+export type ListStaffQueryError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary super_admin-only: server-side paginated/filtered staff directory (Phase 5, Prompt 13 — Identity & Access Administration Center)
+
+ */
+
+export function useListStaff<TData = Awaited<ReturnType<typeof listStaff>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(
+ params?: ListStaffParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStaff>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListStaffQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Creates a real Supabase Auth `auth.users` row via the Admin API (no password is generated, stored, or returned by this backend — Supabase's own invite email carries a secure link for the new staff member to set their own initial password) and, in the same logical operation, the corresponding `staff` row. If the `staff` insert fails after the auth user was created, the orphaned auth user is deleted as a compensating action.
+
+ * @summary super_admin-only: provision a new staff account (Phase 5, Prompt 13)
+
+ */
+export const createStaff = (
+    createStaffBody: CreateStaffBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<StaffAdmin>(
+      {url: `/staff`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: createStaffBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getCreateStaffMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStaff>>, TError,{data: CreateStaffBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createStaff>>, TError,{data: CreateStaffBody}, TContext> => {
+
+const mutationKey = ['createStaff'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createStaff>>, {data: CreateStaffBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createStaff(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateStaffMutationResult = NonNullable<Awaited<ReturnType<typeof createStaff>>>
+    export type CreateStaffMutationBody = CreateStaffBody
+    export type CreateStaffMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody
+
+    /**
+ * @summary super_admin-only: provision a new staff account (Phase 5, Prompt 13)
+
+ */
+export const useCreateStaff = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStaff>>, TError,{data: CreateStaffBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createStaff>>,
+        TError,
+        {data: CreateStaffBody},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateStaffMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary super_admin-only: staff counts by role/status (Phase 5, Prompt 13)
+ */
+export const getStaffStatistics = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<StaffStatistics>(
+      {url: `/staff/statistics`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetStaffStatisticsQueryKey = () => {
+    return [
+    `/staff/statistics`
+    ] as const;
+    }
+
+    
+export const getGetStaffStatisticsQueryOptions = <TData = Awaited<ReturnType<typeof getStaffStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStaffStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStaffStatisticsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStaffStatistics>>> = ({ signal }) => getStaffStatistics(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStaffStatistics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStaffStatisticsQueryResult = NonNullable<Awaited<ReturnType<typeof getStaffStatistics>>>
+export type GetStaffStatisticsQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary super_admin-only: staff counts by role/status (Phase 5, Prompt 13)
+ */
+
+export function useGetStaffStatistics<TData = Awaited<ReturnType<typeof getStaffStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStaffStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStaffStatisticsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * @summary super_admin-only: staff account detail (Phase 5, Prompt 13)
+ */
+export const getStaff = (
+    staffId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<StaffAdmin>(
+      {url: `/staff/${staffId}`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetStaffQueryKey = (staffId?: string,) => {
+    return [
+    `/staff/${staffId}`
+    ] as const;
+    }
+
+    
+export const getGetStaffQueryOptions = <TData = Awaited<ReturnType<typeof getStaff>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(staffId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStaff>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStaffQueryKey(staffId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStaff>>> = ({ signal }) => getStaff(staffId, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(staffId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStaff>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStaffQueryResult = NonNullable<Awaited<ReturnType<typeof getStaff>>>
+export type GetStaffQueryError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+
+/**
+ * @summary super_admin-only: staff account detail (Phase 5, Prompt 13)
+ */
+
+export function useGetStaff<TData = Awaited<ReturnType<typeof getStaff>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(
+ staffId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStaff>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStaffQueryOptions(staffId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Refuses to target the caller's OWN staff id (self-escalation defense) and refuses to demote the last remaining active super_admin (409).
+
+ * @summary super_admin-only: change a staff member's role (Phase 5, Prompt 13)
+ */
+export const changeStaffRole = (
+    staffId: string,
+    changeStaffRoleBody: ChangeStaffRoleBody,
+ options?: SecondParameter<typeof customFetch>,) => {
+      
+      
+      return customFetch<StaffAdmin>(
+      {url: `/staff/${staffId}/role`, method: 'PATCH',
+      headers: {'Content-Type': 'application/json', },
+      data: changeStaffRoleBody
+    },
+      options);
+    }
+  
+
+
+export const getChangeStaffRoleMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeStaffRole>>, TError,{staffId: string;data: ChangeStaffRoleBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changeStaffRole>>, TError,{staffId: string;data: ChangeStaffRoleBody}, TContext> => {
+
+const mutationKey = ['changeStaffRole'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changeStaffRole>>, {staffId: string;data: ChangeStaffRoleBody}> = (props) => {
+          const {staffId,data} = props ?? {};
+
+          return  changeStaffRole(staffId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangeStaffRoleMutationResult = NonNullable<Awaited<ReturnType<typeof changeStaffRole>>>
+    export type ChangeStaffRoleMutationBody = ChangeStaffRoleBody
+    export type ChangeStaffRoleMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody
+
+    /**
+ * @summary super_admin-only: change a staff member's role (Phase 5, Prompt 13)
+ */
+export const useChangeStaffRole = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeStaffRole>>, TError,{staffId: string;data: ChangeStaffRoleBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof changeStaffRole>>,
+        TError,
+        {staffId: string;data: ChangeStaffRoleBody},
+        TContext
+      > => {
+
+      const mutationOptions = getChangeStaffRoleMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Refuses to target the caller's OWN staff id. A null hostelId is rejected if the target's CURRENT role requires one (reception_warden/hostel_admin).
+
+ * @summary super_admin-only: change a staff member's hostel assignment (Phase 5, Prompt 13)
+ */
+export const changeStaffHostel = (
+    staffId: string,
+    changeStaffHostelBody: ChangeStaffHostelBody,
+ options?: SecondParameter<typeof customFetch>,) => {
+      
+      
+      return customFetch<StaffAdmin>(
+      {url: `/staff/${staffId}/hostel`, method: 'PATCH',
+      headers: {'Content-Type': 'application/json', },
+      data: changeStaffHostelBody
+    },
+      options);
+    }
+  
+
+
+export const getChangeStaffHostelMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeStaffHostel>>, TError,{staffId: string;data: ChangeStaffHostelBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changeStaffHostel>>, TError,{staffId: string;data: ChangeStaffHostelBody}, TContext> => {
+
+const mutationKey = ['changeStaffHostel'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changeStaffHostel>>, {staffId: string;data: ChangeStaffHostelBody}> = (props) => {
+          const {staffId,data} = props ?? {};
+
+          return  changeStaffHostel(staffId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangeStaffHostelMutationResult = NonNullable<Awaited<ReturnType<typeof changeStaffHostel>>>
+    export type ChangeStaffHostelMutationBody = ChangeStaffHostelBody
+    export type ChangeStaffHostelMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary super_admin-only: change a staff member's hostel assignment (Phase 5, Prompt 13)
+ */
+export const useChangeStaffHostel = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeStaffHostel>>, TError,{staffId: string;data: ChangeStaffHostelBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof changeStaffHostel>>,
+        TError,
+        {staffId: string;data: ChangeStaffHostelBody},
+        TContext
+      > => {
+
+      const mutationOptions = getChangeStaffHostelMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Enforcement is request-time, not merely cosmetic: a suspended staff member's very next authenticated request fails with 401 (see `apps/reception-dashboard/docs/identity-admin.md`). Refuses to target the caller's OWN staff id and refuses to suspend the last remaining active super_admin (409).
+
+ * @summary super_admin-only: suspend or reactivate a staff member (Phase 5, Prompt 13)
+ */
+export const changeStaffStatus = (
+    staffId: string,
+    changeStaffStatusBody: ChangeStaffStatusBody,
+ options?: SecondParameter<typeof customFetch>,) => {
+      
+      
+      return customFetch<StaffAdmin>(
+      {url: `/staff/${staffId}/status`, method: 'PATCH',
+      headers: {'Content-Type': 'application/json', },
+      data: changeStaffStatusBody
+    },
+      options);
+    }
+  
+
+
+export const getChangeStaffStatusMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeStaffStatus>>, TError,{staffId: string;data: ChangeStaffStatusBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changeStaffStatus>>, TError,{staffId: string;data: ChangeStaffStatusBody}, TContext> => {
+
+const mutationKey = ['changeStaffStatus'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changeStaffStatus>>, {staffId: string;data: ChangeStaffStatusBody}> = (props) => {
+          const {staffId,data} = props ?? {};
+
+          return  changeStaffStatus(staffId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangeStaffStatusMutationResult = NonNullable<Awaited<ReturnType<typeof changeStaffStatus>>>
+    export type ChangeStaffStatusMutationBody = ChangeStaffStatusBody
+    export type ChangeStaffStatusMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody
+
+    /**
+ * @summary super_admin-only: suspend or reactivate a staff member (Phase 5, Prompt 13)
+ */
+export const useChangeStaffStatus = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeStaffStatus>>, TError,{staffId: string;data: ChangeStaffStatusBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof changeStaffStatus>>,
+        TError,
+        {staffId: string;data: ChangeStaffStatusBody},
+        TContext
+      > => {
+
+      const mutationOptions = getChangeStaffStatusMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Triggers Supabase Auth's own password-recovery email — this backend never generates, stores, returns, or logs a password. Refuses to target the caller's OWN staff id.
+
+ * @summary super_admin-only: trigger a password-reset email for a staff member (Phase 5, Prompt 13)
+
+ */
+export const resetStaffPassword = (
+    staffId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ResetStaffPassword202>(
+      {url: `/staff/${staffId}/reset-password`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getResetStaffPasswordMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetStaffPassword>>, TError,{staffId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resetStaffPassword>>, TError,{staffId: string}, TContext> => {
+
+const mutationKey = ['resetStaffPassword'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetStaffPassword>>, {staffId: string}> = (props) => {
+          const {staffId} = props ?? {};
+
+          return  resetStaffPassword(staffId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResetStaffPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof resetStaffPassword>>>
+    
+    export type ResetStaffPasswordMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary super_admin-only: trigger a password-reset email for a staff member (Phase 5, Prompt 13)
+
+ */
+export const useResetStaffPassword = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetStaffPassword>>, TError,{staffId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resetStaffPassword>>,
+        TError,
+        {staffId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getResetStaffPasswordMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Calls Supabase Auth's Admin API `signOut(userId, "global")` — a blunt, whole-account revocation (this SDK surface does not expose a per-session list to revoke individually). Refuses to target the caller's OWN staff id.
+
+ * @summary super_admin-only: revoke every active session for a staff member (Phase 5, Prompt 13)
+
+ */
+export const forceSignOutStaff = (
+    staffId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ForceSignOutStaff202>(
+      {url: `/staff/${staffId}/force-sign-out`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getForceSignOutStaffMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof forceSignOutStaff>>, TError,{staffId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof forceSignOutStaff>>, TError,{staffId: string}, TContext> => {
+
+const mutationKey = ['forceSignOutStaff'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof forceSignOutStaff>>, {staffId: string}> = (props) => {
+          const {staffId} = props ?? {};
+
+          return  forceSignOutStaff(staffId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ForceSignOutStaffMutationResult = NonNullable<Awaited<ReturnType<typeof forceSignOutStaff>>>
+    
+    export type ForceSignOutStaffMutationError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+    /**
+ * @summary super_admin-only: revoke every active session for a staff member (Phase 5, Prompt 13)
+
+ */
+export const useForceSignOutStaff = <TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof forceSignOutStaff>>, TError,{staffId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof forceSignOutStaff>>,
+        TError,
+        {staffId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getForceSignOutStaffMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * A static, server-owned allow-list (`domain` on `configuration_entries` is `text`, not a database enum — this endpoint is the actual source of truth a client should render as options, never a hard-coded frontend copy of the list).
+
+ * @summary hostel_admin/super_admin: the fixed, application-validated list of configuration domains (Phase 5, Prompt 14)
+ */
+export const listConfigurationDomains = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ListConfigurationDomains200>(
+      {url: `/configuration/domains`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListConfigurationDomainsQueryKey = () => {
+    return [
+    `/configuration/domains`
+    ] as const;
+    }
+
+    
+export const getListConfigurationDomainsQueryOptions = <TData = Awaited<ReturnType<typeof listConfigurationDomains>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listConfigurationDomains>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListConfigurationDomainsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listConfigurationDomains>>> = ({ signal }) => listConfigurationDomains(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listConfigurationDomains>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListConfigurationDomainsQueryResult = NonNullable<Awaited<ReturnType<typeof listConfigurationDomains>>>
+export type ListConfigurationDomainsQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin: the fixed, application-validated list of configuration domains (Phase 5, Prompt 14)
+ */
+
+export function useListConfigurationDomains<TData = Awaited<ReturnType<typeof listConfigurationDomains>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listConfigurationDomains>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListConfigurationDomainsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * hostel_admin sees counts across every global entry plus only their own hostel's entries; super_admin is unscoped.
+
+ * @summary hostel_admin/super_admin: configuration entry counts by domain, within the caller's scope (Phase 5, Prompt 14)
+ */
+export const getConfigurationStatistics = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ConfigurationStatistics>(
+      {url: `/configuration/statistics`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetConfigurationStatisticsQueryKey = () => {
+    return [
+    `/configuration/statistics`
+    ] as const;
+    }
+
+    
+export const getGetConfigurationStatisticsQueryOptions = <TData = Awaited<ReturnType<typeof getConfigurationStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getConfigurationStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetConfigurationStatisticsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getConfigurationStatistics>>> = ({ signal }) => getConfigurationStatistics(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getConfigurationStatistics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetConfigurationStatisticsQueryResult = NonNullable<Awaited<ReturnType<typeof getConfigurationStatistics>>>
+export type GetConfigurationStatisticsQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin: configuration entry counts by domain, within the caller's scope (Phase 5, Prompt 14)
+ */
+
+export function useGetConfigurationStatistics<TData = Awaited<ReturnType<typeof getConfigurationStatistics>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getConfigurationStatistics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetConfigurationStatisticsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Runs the EXACT SAME validation `POST /configuration` applies before writing (key format/domain allow-list/value-type consistency/scope- hostel consistency/hostel existence) without persisting anything — the Configuration Editor's "Preview" step. Does not check hostel-scope authorization or duplicate-key conflicts (those depend on the specific create/update call this preview does not perform).
+
+ * @summary hostel_admin/super_admin: stateless validation preview — never persists anything (Phase 5, Prompt 14)
+ */
+export const validateConfiguration = (
+    validateConfigurationBody: ValidateConfigurationBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ConfigurationValidationResult>(
+      {url: `/configuration/validate`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: validateConfigurationBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getValidateConfigurationMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof validateConfiguration>>, TError,{data: ValidateConfigurationBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof validateConfiguration>>, TError,{data: ValidateConfigurationBody}, TContext> => {
+
+const mutationKey = ['validateConfiguration'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof validateConfiguration>>, {data: ValidateConfigurationBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  validateConfiguration(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ValidateConfigurationMutationResult = NonNullable<Awaited<ReturnType<typeof validateConfiguration>>>
+    export type ValidateConfigurationMutationBody = ValidateConfigurationBody
+    export type ValidateConfigurationMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+    /**
+ * @summary hostel_admin/super_admin: stateless validation preview — never persists anything (Phase 5, Prompt 14)
+ */
+export const useValidateConfiguration = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof validateConfiguration>>, TError,{data: ValidateConfigurationBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof validateConfiguration>>,
+        TError,
+        {data: ValidateConfigurationBody},
+        TContext
+      > => {
+
+      const mutationOptions = getValidateConfigurationMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary hostel_admin/super_admin: the configuration directory, server-side paginated/filtered/sorted (Phase 5, Prompt 14)
+ */
+export const listConfiguration = (
+    params?: ListConfigurationParams,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ConfigurationList>(
+      {url: `/configuration`, method: 'GET',
+        params, signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListConfigurationQueryKey = (params?: ListConfigurationParams,) => {
+    return [
+    `/configuration`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListConfigurationQueryOptions = <TData = Awaited<ReturnType<typeof listConfiguration>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(params?: ListConfigurationParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listConfiguration>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListConfigurationQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listConfiguration>>> = ({ signal }) => listConfiguration(params, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listConfiguration>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListConfigurationQueryResult = NonNullable<Awaited<ReturnType<typeof listConfiguration>>>
+export type ListConfigurationQueryError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary hostel_admin/super_admin: the configuration directory, server-side paginated/filtered/sorted (Phase 5, Prompt 14)
+ */
+
+export function useListConfiguration<TData = Awaited<ReturnType<typeof listConfiguration>>, TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse>(
+ params?: ListConfigurationParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listConfiguration>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListConfigurationQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * A hostel_admin may only create a `"scope": "hostel"` entry naming their OWN hostel — never a global entry, never another hostel's (`403`). super_admin is unscoped. Never stores a secret — a key/domain resembling password/token/API key/credential is rejected (`400`).
+
+ * @summary hostel_admin/super_admin: create a configuration entry (Phase 5, Prompt 14)
+ */
+export const createConfigurationEntry = (
+    createConfigurationEntryBody: CreateConfigurationEntryBody,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ConfigurationEntry>(
+      {url: `/configuration`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: createConfigurationEntryBody, signal
+    },
+      options);
+    }
+  
+
+
+export const getCreateConfigurationEntryMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createConfigurationEntry>>, TError,{data: CreateConfigurationEntryBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createConfigurationEntry>>, TError,{data: CreateConfigurationEntryBody}, TContext> => {
+
+const mutationKey = ['createConfigurationEntry'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createConfigurationEntry>>, {data: CreateConfigurationEntryBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createConfigurationEntry(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateConfigurationEntryMutationResult = NonNullable<Awaited<ReturnType<typeof createConfigurationEntry>>>
+    export type CreateConfigurationEntryMutationBody = CreateConfigurationEntryBody
+    export type CreateConfigurationEntryMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody
+
+    /**
+ * @summary hostel_admin/super_admin: create a configuration entry (Phase 5, Prompt 14)
+ */
+export const useCreateConfigurationEntry = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createConfigurationEntry>>, TError,{data: CreateConfigurationEntryBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createConfigurationEntry>>,
+        TError,
+        {data: CreateConfigurationEntryBody},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateConfigurationEntryMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary hostel_admin/super_admin: configuration entry detail (Phase 5, Prompt 14)
+ */
+export const getConfigurationEntry = (
+    entryId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ConfigurationEntry>(
+      {url: `/configuration/${entryId}`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetConfigurationEntryQueryKey = (entryId?: string,) => {
+    return [
+    `/configuration/${entryId}`
+    ] as const;
+    }
+
+    
+export const getGetConfigurationEntryQueryOptions = <TData = Awaited<ReturnType<typeof getConfigurationEntry>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(entryId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getConfigurationEntry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetConfigurationEntryQueryKey(entryId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getConfigurationEntry>>> = ({ signal }) => getConfigurationEntry(entryId, requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(entryId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getConfigurationEntry>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetConfigurationEntryQueryResult = NonNullable<Awaited<ReturnType<typeof getConfigurationEntry>>>
+export type GetConfigurationEntryQueryError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse
+
+
+/**
+ * @summary hostel_admin/super_admin: configuration entry detail (Phase 5, Prompt 14)
+ */
+
+export function useGetConfigurationEntry<TData = Awaited<ReturnType<typeof getConfigurationEntry>>, TError = UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse>(
+ entryId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getConfigurationEntry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetConfigurationEntryQueryOptions(entryId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Optimistic concurrency: `expectedVersion` must match the entry's current `version` or the update is refused (`409`) rather than silently overwriting a concurrent change. A hostel_admin may only update an entry within their own hostel scope (`403`).
+
+ * @summary hostel_admin/super_admin: update a configuration entry's value/description/active state (Phase 5, Prompt 14)
+ */
+export const updateConfigurationEntry = (
+    entryId: string,
+    updateConfigurationEntryBody: UpdateConfigurationEntryBody,
+ options?: SecondParameter<typeof customFetch>,) => {
+      
+      
+      return customFetch<ConfigurationEntry>(
+      {url: `/configuration/${entryId}`, method: 'PATCH',
+      headers: {'Content-Type': 'application/json', },
+      data: updateConfigurationEntryBody
+    },
+      options);
+    }
+  
+
+
+export const getUpdateConfigurationEntryMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateConfigurationEntry>>, TError,{entryId: string;data: UpdateConfigurationEntryBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateConfigurationEntry>>, TError,{entryId: string;data: UpdateConfigurationEntryBody}, TContext> => {
+
+const mutationKey = ['updateConfigurationEntry'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateConfigurationEntry>>, {entryId: string;data: UpdateConfigurationEntryBody}> = (props) => {
+          const {entryId,data} = props ?? {};
+
+          return  updateConfigurationEntry(entryId,data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateConfigurationEntryMutationResult = NonNullable<Awaited<ReturnType<typeof updateConfigurationEntry>>>
+    export type UpdateConfigurationEntryMutationBody = UpdateConfigurationEntryBody
+    export type UpdateConfigurationEntryMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody
+
+    /**
+ * @summary hostel_admin/super_admin: update a configuration entry's value/description/active state (Phase 5, Prompt 14)
+ */
+export const useUpdateConfigurationEntry = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse | NotFoundResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateConfigurationEntry>>, TError,{entryId: string;data: UpdateConfigurationEntryBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateConfigurationEntry>>,
+        TError,
+        {entryId: string;data: UpdateConfigurationEntryBody},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateConfigurationEntryMutationOptions(options);
 
       return useMutation(mutationOptions);
     }

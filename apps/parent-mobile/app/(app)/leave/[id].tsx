@@ -246,6 +246,22 @@ export default function LeaveDetails() {
     );
   }
 
+  if (uiState === "not_yet_sent") {
+    // Reception-Initiated Parent Approval correction: a `pending` leave
+    // request has been created but not yet sent for parent approval by
+    // Reception — genuinely nothing for the parent to do yet, not a missing
+    // feature. See leavePresentationMapper.ts's mapBackendStatus().
+    return (
+      <PageContainer>
+        <PageHeader title="Leave Request" />
+        <EmptyState
+          title="Awaiting hostel review"
+          description="Your child's leave request has been submitted and is awaiting review by hostel reception. You'll be notified here once it's sent to you for approval."
+        />
+      </PageContainer>
+    );
+  }
+
   if (uiState === "cancelled") {
     // Never actually produced today — no cancellation status exists in the
     // backend model (see leavePresentationMapper.ts) — kept here only so

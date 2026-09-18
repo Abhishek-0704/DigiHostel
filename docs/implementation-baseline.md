@@ -42,3 +42,7 @@ There is currently no application source code, backend, frontend/mobile app, dat
 ## Governance Enforcement
 
 The rule that accepted ADRs are authoritative and cannot be silently modified is enforced at the governance layer — see `CLAUDE.md` and `.claude/rules/`. The full lifecycle, supersession, and immutability policy lives in `docs/adr/README.md`; this document does not duplicate it.
+
+## Current Operating Environment (added 2026-09-08)
+
+Development, testing, and staging currently run on Supabase's **Free** tier — this is the active implementation baseline, not a temporary accident. `docs/runbooks/disaster-recovery.md` §23–§27 documents the Free-tier-first policy in full (current Free-tier constraints, architectural review confirming no unintended paid-tier dependency, and the paid-tier scale-up transition plan). [`ADR-022`](adr/ADR-022-production-backup-dr-strategy.md) (ACCEPTED) defines the **future** production DR target — Supabase Pro + PITR at 7-day retention, RPO 1 hour, RTO 1–4 hours — reached via an approved qualitative scale-up trigger, not the current implementation environment. Neither document weakens the other.

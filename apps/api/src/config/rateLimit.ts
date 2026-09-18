@@ -75,3 +75,87 @@ export const RATE_LIMIT_OTP_VERIFY: RateLimitTier = {
   max: envNumber("RATE_LIMIT_OTP_VERIFY_MAX", 10),
   timeWindow: envNumber("RATE_LIMIT_OTP_VERIFY_WINDOW_MS", 60_000),
 };
+
+/** ADR-003 implementation — device-registration challenge issuance. A
+ * legitimate parent registers a handful of real devices, ever; generous
+ * enough for retry-after-a-dropped-response, strict enough that a compromised
+ * bearer token can't be used to mint an unbounded number of live nonces. */
+export const RATE_LIMIT_DEVICE_CHALLENGE: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_DEVICE_CHALLENGE_MAX", 10),
+  timeWindow: envNumber("RATE_LIMIT_DEVICE_CHALLENGE_WINDOW_MS", 60_000),
+};
+
+/** Reception Dashboard Prompt 1 — staff authentication audit-event
+ * reporting. A legitimate staff member reports at most a handful of these
+ * per session (one sign-in, maybe one MFA retry, one sign-out); generous
+ * enough for that, strict enough that a stolen bearer token can't be used
+ * to flood the audit trail. */
+export const RATE_LIMIT_STAFF_AUTH_AUDIT: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_STAFF_AUTH_AUDIT_MAX", 20),
+  timeWindow: envNumber("RATE_LIMIT_STAFF_AUTH_AUDIT_WINDOW_MS", 60_000),
+};
+
+/** Reception-Initiated Parent Approval correction — staff-console usage
+ * pattern, matching RATE_LIMIT_EXPIRE's own reasoning: a Reception Warden
+ * has no legitimate reason to call this many times per minute for the same
+ * or different requests. */
+export const RATE_LIMIT_START_PARENT_APPROVAL: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_START_PARENT_APPROVAL_MAX", 30),
+  timeWindow: envNumber("RATE_LIMIT_START_PARENT_APPROVAL_WINDOW_MS", 60_000),
+};
+
+/** Reception Dashboard Prompt 7A — the staff operational leave-request
+ * queue. A staff console legitimately polls/refreshes this more often than
+ * a mobile app's own occasional list fetch (manual refresh, realtime
+ * reconnect catch-up), so this is more generous than RATE_LIMIT_EXPIRE, but
+ * still bounded well below the global default. */
+export const RATE_LIMIT_STAFF_QUEUE: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_STAFF_QUEUE_MAX", 60),
+  timeWindow: envNumber("RATE_LIMIT_STAFF_QUEUE_WINDOW_MS", 60_000),
+};
+
+/** Phase 3, Prompt 7C — Exit Authorization. Same reasoning as
+ * RATE_LIMIT_EXPIRE/RATE_LIMIT_START_PARENT_APPROVAL: a staff-console action
+ * a Reception Warden has no legitimate reason to call many times per minute
+ * for the same or different requests. */
+export const RATE_LIMIT_EXIT_AUTHORIZATION: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_EXIT_AUTHORIZATION_MAX", 30),
+  timeWindow: envNumber("RATE_LIMIT_EXIT_AUTHORIZATION_WINDOW_MS", 60_000),
+};
+
+/** ADR-003 implementation — device-registration/attestation submission. Each
+ * real Google Play Integrity verification is a billable, rate-limited call on
+ * Google's own side too; this tier is the first line of defense against a
+ * stolen bearer token being used to hammer that call. */
+export const RATE_LIMIT_DEVICE_REGISTER: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_DEVICE_REGISTER_MAX", 10),
+  timeWindow: envNumber("RATE_LIMIT_DEVICE_REGISTER_WINDOW_MS", 60_000),
+};
+
+/** Phase 5, Prompt 13 — Identity & Access Administration Center mutations
+ * (create/role/hostel/status/reset-password/force-sign-out). The single
+ * most sensitive mutation surface in this API — every one of these routes
+ * is `requireSuperAdmin()`-gated and several involve the Supabase Auth
+ * Admin API. A legitimate super_admin has no reason to perform many of
+ * these per minute; matches RATE_LIMIT_OTP_REQUEST's "deliberately the
+ * strictest tier" reasoning for the same class of concern (a stolen bearer
+ * token being used to hammer a costly/sensitive external-API-backed
+ * action), not RATE_LIMIT_STAFF_QUEUE's more generous console-polling
+ * reasoning. */
+export const RATE_LIMIT_STAFF_ADMIN: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_STAFF_ADMIN_MAX", 10),
+  timeWindow: envNumber("RATE_LIMIT_STAFF_ADMIN_WINDOW_MS", 60_000),
+};
+
+/** Phase 5, Prompt 14 — Enterprise Configuration Center mutations
+ * (create/update). Purely DB-only staff-console actions with no external
+ * Admin API call — matches RATE_LIMIT_STAFF_QUEUE's/RATE_LIMIT_EXPIRE's
+ * "staff-console usage pattern, moderate" reasoning rather than
+ * RATE_LIMIT_STAFF_ADMIN's "costly/sensitive external-API-backed action"
+ * reasoning (there is no external call here to protect). Still meaningfully
+ * stricter than read traffic, since these are the mutations that can affect
+ * other staff sessions/other hostels' visible configuration. */
+export const RATE_LIMIT_CONFIGURATION_ADMIN: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_CONFIGURATION_ADMIN_MAX", 30),
+  timeWindow: envNumber("RATE_LIMIT_CONFIGURATION_ADMIN_WINDOW_MS", 60_000),
+};

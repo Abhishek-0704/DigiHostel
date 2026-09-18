@@ -1,4 +1,12 @@
-import { StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
+import { useEffect } from "react";
+import {
+  AccessibilityInfo,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type TextInputProps,
+} from "react-native";
 import { useThemeContext } from "../../contexts/ThemeContext";
 
 export interface TextFieldProps extends TextInputProps {
@@ -13,6 +21,17 @@ export interface TextFieldProps extends TextInputProps {
 export function TextField({ label, errorMessage, style, ...inputProps }: TextFieldProps) {
   const { theme } = useThemeContext();
   const hasError = Boolean(errorMessage);
+
+  // `accessibilityRole="alert"` on a plain Text is not reliably announced by
+  // TalkBack/VoiceOver when it appears (confirmed live on-device — see
+  // ConfirmationPanel.tsx's identical doc comment, the first place this was
+  // diagnosed); a validation error must be told to a screen-reader user, not
+  // left to discover by swiping past.
+  useEffect(() => {
+    if (errorMessage) {
+      AccessibilityInfo.announceForAccessibility(errorMessage);
+    }
+  }, [errorMessage]);
 
   return (
     <View>

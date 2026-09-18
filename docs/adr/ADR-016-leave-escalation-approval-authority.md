@@ -2,11 +2,12 @@
 
 - **ADR ID:** ADR-016
 - **Title:** Leave Escalation Approval-Authority Model
-- **Status:** ACCEPTED
+- **Status:** ACCEPTED (§Context/§Decision's inclusion of `pending` in "any decidable status" partially superseded by ADR-025 — see the notice below)
 - **Date:** 2026-09-02
 - **Accepted:** 2026-09-02, in the "Resolve Leave Escalation Decisions — Final Governance Gate" task. No new evidence emerged that contradicts the analysis below; the Decision, Alternatives, Rationale, and Consequences sections are preserved exactly as originally proposed, per this repository's ADR governance (`docs/adr/README.md` — "An ADR that is still PROPOSED may be refined before acceptance"; nothing below was rewritten at acceptance, only this metadata block was updated).
-- **Related ADRs:** ADR-002 (Database Domain Model), ADR-010 (Notification Architecture), ADR-011 (Background Job Architecture), ADR-014 (Supabase Auth), ADR-015 (Approval Workflow Data Model), ADR-017 (Leave Escalation State-Machine — depends on this ADR's decision), ADR-018 (Notification Delivery Reliability). Does not supersede any of these — it resolves a question none of them decided.
+- **Related ADRs:** ADR-002 (Database Domain Model), ADR-010 (Notification Architecture), ADR-011 (Background Job Architecture), ADR-014 (Supabase Auth), ADR-015 (Approval Workflow Data Model), ADR-017 (Leave Escalation State-Machine — depends on this ADR's decision), ADR-018 (Notification Delivery Reliability), **[ADR-025](ADR-025-parent-decision-authority-excludes-pending.md) (Parent Decision Authority Excludes `pending` — partially supersedes this ADR; see the notice below)**. Does not supersede any of these — it resolves a question none of them decided.
 - **Related design record:** `docs/leave-escalation-notification-design.md` (full Decision Matrix, Decision Area 1)
+- **⚠️ Superseded-in-part notice**: [ADR-025](ADR-025-parent-decision-authority-excludes-pending.md) (ACCEPTED) supersedes the one specific claim, appearing in both §Context and §Decision below, that `pending` is among the statuses "any decidable status" covers for parent decision authority — as of the Reception-Initiated Parent Approval correction, `pending` means "not yet sent for parent approval by Reception" and is decidable by no one, of any relationship type. **This ADR's actual Decision — Model C, relationship-based (not escalation-stage-restricted) authority — is NOT superseded and remains this repository's accepted answer to "which linked parent may decide."** §Context/§Decision's text below is preserved unedited, exactly as accepted, per this repository's ADR immutability rule — read ADR-025 for the corrected status domain before relying on this ADR's "pending is decidable" claim.
 
 ## Context
 
@@ -71,4 +72,6 @@ Model B, as detailed above.
 
 ## Supersedes / Superseded by
 
-None — this is a new decision, not a change to any existing accepted ADR's text.
+**Supersedes**: none — this is a new decision, not a change to any existing accepted ADR's text.
+
+**Superseded by**: [ADR-025](ADR-025-parent-decision-authority-excludes-pending.md) — **the "`pending` is decidable" clause only** (§Context/§Decision). This ADR's actual Model C decision (relationship-based, not escalation-stage-restricted, authority) is not superseded and remains authoritative — see the superseded-in-part notice above.

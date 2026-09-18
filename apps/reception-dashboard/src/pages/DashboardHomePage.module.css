@@ -1,0 +1,25 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--spacing-lg);
+  align-items: start;
+}
+
+.mainColumn,
+.sideColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+@media (max-width: 1024px) {
+  .columns {
+    grid-template-columns: 1fr;
+  }
+}

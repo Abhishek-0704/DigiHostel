@@ -1,5 +1,13 @@
-import { useCallback } from "react";
-import { FlatList, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect } from "react";
+import {
+  AccessibilityInfo,
+  FlatList,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
 import { PageContainer } from "@/src/components/layout/PageContainer";
 import { PageHeader } from "@/src/components/layout/PageHeader";
@@ -58,6 +66,15 @@ export default function NotificationCenter() {
     performAction,
     actionError,
   } = useNotificationCenter();
+
+  // See src/components/ui/TextField.tsx's identical fix — `accessibilityRole="alert"`
+  // alone is not reliably announced by TalkBack/VoiceOver on this platform.
+  // Placed before the early returns below (rules of hooks).
+  useEffect(() => {
+    if (actionError) {
+      AccessibilityInfo.announceForAccessibility(actionError.userMessage);
+    }
+  }, [actionError]);
 
   const openDetails = useCallback(
     (notification: ParentNotification) => {

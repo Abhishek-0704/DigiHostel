@@ -1,0 +1,51 @@
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition:
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease;
+}
+
+.item:hover {
+  background: var(--color-surface-variant);
+  color: var(--color-text-primary);
+}
+
+/* Active state is never color-only (§27): a left border accent and bold
+   weight accompany the color/background change, and `aria-current="page"`
+   (set automatically by NavLink) carries the semantic signal. */
+.active {
+  background: var(--color-surface-variant);
+  color: var(--color-primary);
+  border-left-color: var(--color-primary);
+  font-weight: 700;
+}
+
+.collapsedItem {
+  justify-content: center;
+  padding: var(--spacing-sm);
+}
+
+/* Visually hidden but still in the accessibility tree — the collapsed
+   sidebar's labels are never removed, only hidden from sighted layout
+   (§8/§27: a collapsed item must still expose an accessible label). */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

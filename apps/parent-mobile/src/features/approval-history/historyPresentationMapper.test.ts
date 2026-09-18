@@ -19,7 +19,10 @@ describe("mapLeaveRequestToHistoryRecord", () => {
     const result = mapLeaveRequestToHistoryRecord(backendRow());
     expect(result.id).toBe("11111111-1111-1111-1111-111111111111");
     expect(result.reason).toBe("Family function");
-    expect(result.status).toBe("awaiting_response");
+    // Default backendRow() status is "pending" — not yet sent for parent
+    // approval by Reception (Reception-Initiated Parent Approval
+    // correction), so this is "not_yet_sent", never "awaiting_response".
+    expect(result.status).toBe("not_yet_sent");
   });
 
   it("sets requestedAt to the same value as createdAt", () => {

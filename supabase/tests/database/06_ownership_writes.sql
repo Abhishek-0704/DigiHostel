@@ -1,6 +1,6 @@
 -- RLS scenario: users cannot modify records they do not own/control.
 begin;
-select plan(4);
+select plan(5);
 
 set local role authenticated;
 
@@ -49,6 +49,28 @@ select is(
   (select revoked_at from trusted_devices where id = 'f0000000-0000-0000-0000-000000000001'),
   null,
   'reception: cannot revoke a parent''s trusted device (staff has no policy on trusted_devices)'
+);
+
+-- F-QG02-01 (QG-02 Leave Authorization Workflow Review, remediated):
+-- reception (Kalinga, own-hostel, own-student) attempts to directly PATCH
+-- the seeded 'father_notified' leave request straight to 'approved' via
+-- RLS, bypassing DrizzleLeaveRepository.decide() entirely — the exact shape
+-- of QG-02's live-reproduced Exploit Replay 2. leave_requests_update_reception
+-- (packages/db/src/schema/leave.ts, supabase/migrations/
+-- 0012_fqg0201_exit_authorization_workflow_state_gate.sql) now requires
+-- status = 'manual_verification' in its USING clause, so a 'father_notified'
+-- row is invisible to this UPDATE statement entirely: it succeeds but
+-- silently affects zero rows, the same "affects nothing" RLS pattern
+-- already established elsewhere in this suite (see the student2/parent3
+-- cases above) rather than raising an error.
+set local role authenticated;
+set local request.jwt.claims to '{"sub": "66666666-6666-6666-6666-666666666666"}';
+update leave_requests set status = 'approved' where id = '10000000-0000-0000-0000-000000000001';
+reset role;
+select isnt(
+  (select status from leave_requests where id = '10000000-0000-0000-0000-000000000001')::text,
+  'approved',
+  'F-QG02-01: reception (Kalinga) cannot directly force a father_notified leave request to approved via RLS — only manual_verification-origin rows are UPDATE-visible'
 );
 
 select * from finish();

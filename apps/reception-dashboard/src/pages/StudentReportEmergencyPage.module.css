@@ -1,0 +1,89 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg);
+}
+
+.heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.metaList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+}
+
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  font-size: 13px;
+}
+
+.metaRow dt {
+  color: var(--color-text-secondary);
+}
+
+.metaRow dd {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.select,
+.textarea {
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.formError {
+  margin: 0;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+.successBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 13px;
+  color: var(--color-text-primary);
+}

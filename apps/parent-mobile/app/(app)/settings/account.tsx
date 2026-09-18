@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { AccessibilityInfo, ScrollView, StyleSheet, Text, View } from "react-native";
 import { PageContainer } from "@/src/components/layout/PageContainer";
 import { PageHeader } from "@/src/components/layout/PageHeader";
 import { Card } from "@/src/components/ui/Card";
@@ -29,6 +29,14 @@ export default function Account() {
   const { signOut } = useAuth();
   const [uiState, setUiState] = useState<AccountUiState>("idle");
   const [logoutError, setLogoutError] = useState<AppError | null>(null);
+
+  // See src/components/ui/TextField.tsx's identical fix — `accessibilityRole="alert"`
+  // alone is not reliably announced by TalkBack/VoiceOver on this platform.
+  useEffect(() => {
+    if (logoutError) {
+      AccessibilityInfo.announceForAccessibility(logoutError.userMessage);
+    }
+  }, [logoutError]);
 
   const handleConfirmLogout = async () => {
     setUiState("logging_out");

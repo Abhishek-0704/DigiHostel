@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useEffect } from "react";
+import { AccessibilityInfo, StyleSheet, Text, View } from "react-native";
 import { useThemeContext } from "../../contexts/ThemeContext";
 import { useNetworkContext } from "../../contexts/NetworkContext";
 
@@ -11,6 +12,14 @@ import { useNetworkContext } from "../../contexts/NetworkContext";
 export function OfflineBanner() {
   const { theme } = useThemeContext();
   const { status } = useNetworkContext();
+
+  // See TextField.tsx's identical fix — `accessibilityRole="alert"` alone
+  // is not reliably announced by TalkBack/VoiceOver on this platform.
+  useEffect(() => {
+    if (status === "offline") {
+      AccessibilityInfo.announceForAccessibility("You're offline");
+    }
+  }, [status]);
 
   if (status !== "offline") return null;
 

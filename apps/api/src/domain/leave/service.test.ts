@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { LeaveService } from "./service.js";
 import { FakeLeaveRepository } from "./__fixtures__/fake-repository.js";
 import {
+  ExitAuthorizationConflictError,
   LeaveBiometricConfirmationError,
   LeaveRequestConflictError,
   LeaveRequestNotFoundError,
@@ -86,9 +87,15 @@ describe("LeaveService.getForParent — relationship authorization", () => {
 });
 
 describe("LeaveService.decide — state machine", () => {
-  it("pending -> approved succeeds", async () => {
+  // Reception-Initiated Parent Approval correction: `father_notified` (not
+  // `pending`) is the seed status here — decide() is being tested for its
+  // own state-transition mechanics, and `pending` is deliberately no longer
+  // parent-decidable (see the dedicated "pending -> ... fails" case in the
+  // conflict matrix below, and the "LeaveService.startParentApproval"
+  // describe block for the mechanism that gets a request out of `pending`).
+  it("father_notified -> approved succeeds", async () => {
     const repo = new FakeLeaveRepository()
-      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "pending"))
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "father_notified"))
       .linkParentToStudent(PARENT_A, STUDENT_1);
     const service = new LeaveService(repo, alwaysFreshGate());
 
@@ -101,9 +108,9 @@ describe("LeaveService.decide — state machine", () => {
     expect(result.status).toBe("approved");
   });
 
-  it("pending -> rejected succeeds", async () => {
+  it("father_notified -> rejected succeeds", async () => {
     const repo = new FakeLeaveRepository()
-      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "pending"))
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "father_notified"))
       .linkParentToStudent(PARENT_A, STUDENT_1);
     const service = new LeaveService(repo, alwaysFreshGate());
 
@@ -117,6 +124,8 @@ describe("LeaveService.decide — state machine", () => {
   });
 
   it.each([
+    ["pending", "approved"],
+    ["pending", "rejected"],
     ["approved", "approved"],
     ["approved", "rejected"],
     ["rejected", "approved"],
@@ -178,6 +187,93 @@ describe("LeaveService.decide — state machine", () => {
     // status unchanged.
     expect(repo.events).toHaveLength(0);
     expect(repo.leaveRequests.get("lr-1")?.status).toBe("pending");
+  });
+});
+
+describe("LeaveService.startParentApproval — Reception-Initiated Parent Approval correction", () => {
+  const HOSTEL_A = "hostel-a";
+  const HOSTEL_B = "hostel-b";
+  const RECEPTION_A = "reception-a";
+  const RECEPTION_B = "reception-b";
+  const SUPER_ADMIN = "super-admin-1";
+
+  it("pending -> father_notified succeeds and the request becomes parent-decidable", async () => {
+    const repo = new FakeLeaveRepository().addLeaveRequest(
+      makeLeaveRequest("lr-1", STUDENT_1, "pending"),
+    );
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const view = await service.startParentApproval({
+      leaveRequestId: "lr-1",
+      actingStaffId: SUPER_ADMIN,
+      actingStaffRole: "super_admin",
+    });
+    expect(view.status).toBe("father_notified");
+  });
+
+  it("reception_warden in the SAME hostel as the student: succeeds", async () => {
+    const repo = new FakeLeaveRepository()
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "pending"))
+      .linkStaffToHostel(RECEPTION_A, HOSTEL_A)
+      .linkStudentToHostel(STUDENT_1, HOSTEL_A);
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const view = await service.startParentApproval({
+      leaveRequestId: "lr-1",
+      actingStaffId: RECEPTION_A,
+      actingStaffRole: "reception_warden",
+    });
+    expect(view.status).toBe("father_notified");
+  });
+
+  it("reception_warden in a DIFFERENT hostel: denied (not found, anti-enumeration) — never silently a 403 that would confirm the request exists", async () => {
+    const repo = new FakeLeaveRepository()
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "pending"))
+      .linkStaffToHostel(RECEPTION_B, HOSTEL_B)
+      .linkStudentToHostel(STUDENT_1, HOSTEL_A);
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    await expect(
+      service.startParentApproval({
+        leaveRequestId: "lr-1",
+        actingStaffId: RECEPTION_B,
+        actingStaffRole: "reception_warden",
+      }),
+    ).rejects.toBeInstanceOf(LeaveRequestNotFoundError);
+  });
+
+  it.each(["father_notified", "mother_notified", "approved", "rejected", "expired"] as const)(
+    "already non-pending (%s): 409 conflict, not silently accepted — covers both an already-started process and a second click",
+    async (currentStatus) => {
+      const repo = new FakeLeaveRepository().addLeaveRequest(
+        makeLeaveRequest("lr-1", STUDENT_1, currentStatus),
+      );
+      const service = new LeaveService(repo, alwaysFreshGate());
+
+      const err = await service
+        .startParentApproval({
+          leaveRequestId: "lr-1",
+          actingStaffId: SUPER_ADMIN,
+          actingStaffRole: "super_admin",
+        })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(LeaveRequestConflictError);
+      expect((err as LeaveRequestConflictError).currentStatus).toBe(currentStatus);
+    },
+  );
+
+  it("nonexistent leave request: not_found", async () => {
+    const repo = new FakeLeaveRepository();
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    await expect(
+      service.startParentApproval({
+        leaveRequestId: "lr-does-not-exist",
+        actingStaffId: SUPER_ADMIN,
+        actingStaffRole: "super_admin",
+      }),
+    ).rejects.toBeInstanceOf(LeaveRequestNotFoundError);
   });
 });
 
@@ -328,5 +424,134 @@ describe("LeaveService.markExpired — staff-only, from manual_verification only
 
     expect(err).toBeInstanceOf(LeaveRequestConflictError);
     expect((err as LeaveRequestConflictError).currentStatus).toBe("guardian_notified");
+  });
+});
+
+describe("LeaveService.authorizeExit — Phase 3, Prompt 7C Student Verification & Exit Authorization", () => {
+  const HOSTEL_A = "hostel-a";
+  const HOSTEL_B = "hostel-b";
+  const RECEPTION_A = "reception-a";
+  const RECEPTION_B = "reception-b";
+  const SUPER_ADMIN = "super-admin-1";
+
+  it("approved leave request, identityConfirmed=true: succeeds and records the exit", async () => {
+    const repo = new FakeLeaveRepository().addLeaveRequest(
+      makeLeaveRequest("lr-1", STUDENT_1, "approved"),
+    );
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const view = await service.authorizeExit({
+      leaveRequestId: "lr-1",
+      actingStaffId: SUPER_ADMIN,
+      actingStaffRole: "super_admin",
+      identityConfirmed: true,
+    });
+    expect(view.leaveRequestId).toBe("lr-1");
+    expect(view.identityConfirmed).toBe(true);
+    expect(view.authorizedAt).toBeTruthy();
+  });
+
+  it("reception_warden in the SAME hostel as the student: succeeds", async () => {
+    const repo = new FakeLeaveRepository()
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "approved"))
+      .linkStaffToHostel(RECEPTION_A, HOSTEL_A)
+      .linkStudentToHostel(STUDENT_1, HOSTEL_A);
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const view = await service.authorizeExit({
+      leaveRequestId: "lr-1",
+      actingStaffId: RECEPTION_A,
+      actingStaffRole: "reception_warden",
+      identityConfirmed: true,
+    });
+    expect(view.leaveRequestId).toBe("lr-1");
+  });
+
+  it("reception_warden in a DIFFERENT hostel: denied (not found, anti-enumeration)", async () => {
+    const repo = new FakeLeaveRepository()
+      .addLeaveRequest(makeLeaveRequest("lr-1", STUDENT_1, "approved"))
+      .linkStaffToHostel(RECEPTION_B, HOSTEL_B)
+      .linkStudentToHostel(STUDENT_1, HOSTEL_A);
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    await expect(
+      service.authorizeExit({
+        leaveRequestId: "lr-1",
+        actingStaffId: RECEPTION_B,
+        actingStaffRole: "reception_warden",
+        identityConfirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(LeaveRequestNotFoundError);
+  });
+
+  it.each([
+    "pending",
+    "father_notified",
+    "mother_notified",
+    "guardian_notified",
+    "in_app_call",
+    "manual_verification",
+    "rejected",
+    "expired",
+  ] as const)("not yet approved (%s): 409 conflict, never silently accepted", async (status) => {
+    const repo = new FakeLeaveRepository().addLeaveRequest(
+      makeLeaveRequest("lr-1", STUDENT_1, status),
+    );
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const err = await service
+      .authorizeExit({
+        leaveRequestId: "lr-1",
+        actingStaffId: SUPER_ADMIN,
+        actingStaffRole: "super_admin",
+        identityConfirmed: true,
+      })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ExitAuthorizationConflictError);
+    expect((err as ExitAuthorizationConflictError).reason).toBe("not_approved");
+    expect((err as ExitAuthorizationConflictError).currentStatus).toBe(status);
+  });
+
+  it("already-authorized exit: second attempt is a 409 conflict, not a duplicate record", async () => {
+    const repo = new FakeLeaveRepository().addLeaveRequest(
+      makeLeaveRequest("lr-1", STUDENT_1, "approved"),
+    );
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    const first = await service.authorizeExit({
+      leaveRequestId: "lr-1",
+      actingStaffId: SUPER_ADMIN,
+      actingStaffRole: "super_admin",
+      identityConfirmed: true,
+    });
+    expect(first.leaveRequestId).toBe("lr-1");
+
+    const err = await service
+      .authorizeExit({
+        leaveRequestId: "lr-1",
+        actingStaffId: SUPER_ADMIN,
+        actingStaffRole: "super_admin",
+        identityConfirmed: true,
+      })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ExitAuthorizationConflictError);
+    expect((err as ExitAuthorizationConflictError).reason).toBe("already_authorized");
+    expect(repo.exitAuthorizations.size).toBe(1);
+  });
+
+  it("nonexistent leave request: not_found, same anti-enumeration shape as markExpired/startParentApproval", async () => {
+    const repo = new FakeLeaveRepository();
+    const service = new LeaveService(repo, alwaysFreshGate());
+
+    await expect(
+      service.authorizeExit({
+        leaveRequestId: "lr-does-not-exist",
+        actingStaffId: SUPER_ADMIN,
+        actingStaffRole: "super_admin",
+        identityConfirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(LeaveRequestNotFoundError);
   });
 });

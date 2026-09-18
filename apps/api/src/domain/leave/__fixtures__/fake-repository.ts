@@ -1,14 +1,32 @@
-import type { AdvanceOutcome, DecideOutcome, LeaveRepository } from "../repository.js";
+import type {
+  AdvanceOutcome,
+  DecideOutcome,
+  ExitAuthorizationOutcome,
+  LeaveRepository,
+} from "../repository.js";
 import {
-  DECIDABLE_STATUSES,
+  PARENT_DECIDABLE_STATUSES,
   NEXT_ESCALATION_STAGE,
+  type AuthorizeExitInput,
   type CreateLeaveRequestInput,
   type DecidableStatus,
   type DecideLeaveRequestInput,
+  type ExitAuthorizationView,
   type LeaveApprovalEventView,
   type LeaveRequestView,
   type MarkExpiredInput,
+  type StaffLeaveQueueInput,
+  type StaffLeaveQueueItemView,
 } from "../types.js";
+
+interface FakeStudentInfo {
+  rollNumber: string;
+  fullName: string;
+  hostelId: string | null;
+  hostelName: string | null;
+  roomId: string | null;
+  roomNumber: string | null;
+}
 
 /** Deterministic in-memory fake of LeaveRepository — no live database
  * connection. Mirrors the real repository's core invariant (a single
@@ -36,6 +54,15 @@ export class FakeLeaveRepository implements LeaveRepository {
    * writes) and directly seedable via addApprovalEvent() for tests that need
    * a richer/older timeline than a single fake decision produces. */
   approvalEvents = new Map<string, LeaveApprovalEventView[]>();
+  /** Phase 3, Prompt 7C — mirrors leave_exit_authorizations's UNIQUE
+   * (leave_request_id) invariant in-memory: at most one entry per
+   * leaveRequestId, keyed by leaveRequestId itself (not a separate id), so a
+   * second insert attempt is trivially detectable the same way the real
+   * repository's unique-violation catch is. */
+  exitAuthorizations = new Map<string, ExitAuthorizationView>();
+  /** Staff queue enrichment fixture — mirrors the real repository's
+   * students/hostels/rooms joins, in-memory. Keyed by studentId. */
+  studentDirectory = new Map<string, FakeStudentInfo>();
 
   addLeaveRequest(view: LeaveRequestView) {
     this.leaveRequests.set(view.id, view);
@@ -59,6 +86,10 @@ export class FakeLeaveRepository implements LeaveRepository {
     this.studentHostels.set(studentId, hostelId);
     return this;
   }
+  addStudentInfo(studentId: string, info: FakeStudentInfo) {
+    this.studentDirectory.set(studentId, info);
+    return this;
+  }
 
   async findAccessibleLeaveRequest(
     leaveRequestId: string,
@@ -75,7 +106,7 @@ export class FakeLeaveRepository implements LeaveRepository {
     if (!request || !this.linkedPairs.has(`${input.actingParentId}:${request.studentId}`)) {
       return { kind: "not_found" };
     }
-    if (!(DECIDABLE_STATUSES as readonly string[]).includes(request.status)) {
+    if (!(PARENT_DECIDABLE_STATUSES as readonly string[]).includes(request.status)) {
       return { kind: "conflict", currentStatus: request.status };
     }
     const updated: LeaveRequestView = {
@@ -109,8 +140,11 @@ export class FakeLeaveRepository implements LeaveRepository {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    // Reception-Initiated Parent Approval correction: no escalation job is
+    // scheduled here anymore — matches DrizzleLeaveRepository.create()'s
+    // real behavior exactly. See startParentApproval() below for the only
+    // path that now schedules one.
     this.leaveRequests.set(view.id, view);
-    this.scheduledEscalationJobs.push({ leaveRequestId: view.id, expectedStage: "pending" });
     return view;
   }
 
@@ -195,5 +229,130 @@ export class FakeLeaveRepository implements LeaveRepository {
     return [...(this.approvalEvents.get(leaveRequestId) ?? [])].sort((a, b) =>
       a.occurredAt.localeCompare(b.occurredAt),
     );
+  }
+
+  async listForStaffQueue(input: StaffLeaveQueueInput): Promise<StaffLeaveQueueItemView[]> {
+    const staffHostel = this.staffHostels.get(input.staffId) ?? null;
+
+    const items = [...this.leaveRequests.values()].filter((request) => {
+      if (input.staffRole === "super_admin") return true;
+      const studentHostel = this.studentHostels.get(request.studentId) ?? null;
+      return staffHostel !== null && staffHostel === studentHostel;
+    });
+
+    const enriched: StaffLeaveQueueItemView[] = items.map((request) => {
+      const info = this.studentDirectory.get(request.studentId) ?? {
+        rollNumber: "",
+        fullName: "",
+        hostelId: this.studentHostels.get(request.studentId) ?? null,
+        hostelName: null,
+        roomId: null,
+        roomNumber: null,
+      };
+      return {
+        ...request,
+        studentRollNumber: info.rollNumber,
+        studentFullName: info.fullName,
+        studentHostelId: info.hostelId,
+        studentHostelName: info.hostelName,
+        studentRoomId: info.roomId,
+        studentRoomNumber: info.roomNumber,
+      };
+    });
+
+    return enriched.sort(
+      (a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id),
+    );
+  }
+
+  async findAccessibleLeaveRequestForStaff(
+    leaveRequestId: string,
+    input: StaffLeaveQueueInput,
+  ): Promise<LeaveRequestView | null> {
+    const request = this.leaveRequests.get(leaveRequestId);
+    if (!request) return null;
+    if (input.staffRole === "super_admin") return request;
+    const staffHostel = this.staffHostels.get(input.staffId) ?? null;
+    const studentHostel = this.studentHostels.get(request.studentId) ?? null;
+    if (staffHostel === null || staffHostel !== studentHostel) return null;
+    return request;
+  }
+
+  async startParentApproval(input: {
+    leaveRequestId: string;
+    actingStaffId: string;
+    actingStaffRole: StaffLeaveQueueInput["staffRole"];
+  }): Promise<DecideOutcome> {
+    const request = this.leaveRequests.get(input.leaveRequestId);
+    if (!request) {
+      return { kind: "not_found" };
+    }
+    if (input.actingStaffRole !== "super_admin") {
+      const staffHostel = this.staffHostels.get(input.actingStaffId);
+      const studentHostel = this.studentHostels.get(request.studentId);
+      if (!staffHostel || staffHostel !== studentHostel) {
+        return { kind: "not_found" };
+      }
+    }
+    if (request.status !== "pending") {
+      return { kind: "conflict", currentStatus: request.status };
+    }
+    const updated: LeaveRequestView = {
+      ...request,
+      status: "father_notified",
+      updatedAt: new Date().toISOString(),
+    };
+    this.leaveRequests.set(input.leaveRequestId, updated);
+    this.addApprovalEvent(input.leaveRequestId, {
+      id: crypto.randomUUID(),
+      eventType: "manual_override",
+      response: null,
+      biometricConfirmed: false,
+      occurredAt: updated.updatedAt,
+    });
+    this.scheduledEscalationJobs.push({
+      leaveRequestId: input.leaveRequestId,
+      expectedStage: "father_notified",
+    });
+    this.scheduledNotificationJobs.push({
+      leaveRequestId: input.leaveRequestId,
+      stage: "father_notified",
+    });
+    return { kind: "success", leaveRequest: updated };
+  }
+
+  async authorizeExit(input: AuthorizeExitInput): Promise<ExitAuthorizationOutcome> {
+    const request = this.leaveRequests.get(input.leaveRequestId);
+    if (!request) {
+      return { kind: "not_found" };
+    }
+    if (input.actingStaffRole !== "super_admin") {
+      const staffHostel = this.staffHostels.get(input.actingStaffId);
+      const studentHostel = this.studentHostels.get(request.studentId);
+      if (!staffHostel || staffHostel !== studentHostel) {
+        return { kind: "not_found" };
+      }
+    }
+    if (request.status !== "approved") {
+      return { kind: "conflict", reason: "not_approved", currentStatus: request.status };
+    }
+    if (this.exitAuthorizations.has(input.leaveRequestId)) {
+      return { kind: "conflict", reason: "already_authorized" };
+    }
+    const view: ExitAuthorizationView = {
+      id: crypto.randomUUID(),
+      leaveRequestId: input.leaveRequestId,
+      identityConfirmed: input.identityConfirmed,
+      authorizedAt: new Date().toISOString(),
+    };
+    this.exitAuthorizations.set(input.leaveRequestId, view);
+    this.addApprovalEvent(input.leaveRequestId, {
+      id: crypto.randomUUID(),
+      eventType: "manual_override",
+      response: null,
+      biometricConfirmed: false,
+      occurredAt: view.authorizedAt,
+    });
+    return { kind: "success", exitAuthorization: view };
   }
 }

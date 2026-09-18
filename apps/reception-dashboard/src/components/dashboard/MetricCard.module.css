@@ -1,0 +1,71 @@
+.card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.actionable {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  width: 100%;
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: default;
+  font: inherit;
+  color: inherit;
+}
+
+button.actionable {
+  cursor: pointer;
+}
+
+button.actionable:hover {
+  background: var(--color-surface-variant);
+}
+
+button.actionable:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.iconWrap {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-variant);
+  color: var(--color-secondary);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.unavailable {
+  font-size: 13px;
+  color: var(--color-text-disabled);
+}
+
+.unavailable span[aria-hidden] {
+  font-size: 20px;
+  margin-right: var(--spacing-xs);
+}

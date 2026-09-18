@@ -1,0 +1,60 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.scopeIndicator {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  padding: 4px var(--spacing-sm);
+  background: var(--color-surface-variant);
+  border-radius: var(--radius-full);
+}
+
+.toolbarRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.sortLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.sortSelect {
+  padding: 6px var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.pageInfo {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.pageButtons {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.connectionNote {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}

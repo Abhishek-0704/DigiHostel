@@ -115,11 +115,152 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorBody"
 
+  /auth/staff/audit-events:
+    post:
+      operationId: recordStaffAuthEvent
+      tags: [auth]
+      summary: >
+        Record a staff authentication event in the audit trail (Reception
+        Dashboard Prompt 1 — Authentication Infrastructure)
+      description: >
+        Staff password sign-in and native TOTP MFA happen via direct
+        browser-to-Supabase-Auth calls (ADR-024) — this backend never
+        observes them as they happen. This endpoint lets the already-
+        authenticated caller report that one occurred, so it lands in
+        DigiHostel's own audit_logs trail (not just Supabase's internal
+        auth.audit_log_entries, which already captures the raw attempt
+        regardless of this endpoint). Only events a caller can report while
+        still holding a valid bearer token are supported here —
+        sign-in-failure and session-expiry events have no valid token to
+        authenticate the report with, and are covered by Supabase's own
+        auth.audit_log_entries instead (see
+        apps/reception-dashboard/docs/authorization.md).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffAuthEventBody"
+      responses:
+        "204":
+          description: Recorded (best-effort — see description)
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /devices/challenge:
+    post:
+      operationId: requestDeviceChallenge
+      tags: [devices]
+      summary: >
+        Request a device-registration challenge (ADR-003 implementation)
+      security: [{ bearerAuth: [] }]
+      description: >
+        Server-controlled first step of trusted-device registration: issues a
+        single-use, short-lived, cryptographically random nonce bound to the
+        caller's own parent identity. The client passes this nonce into the
+        platform attestation call (Play Integrity on Android) and submits the
+        resulting token to POST /devices/register — the client is never the
+        authority for the challenge value itself.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RequestDeviceChallengeBody"
+      responses:
+        "200":
+          description: A real, server-issued challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceChallenge"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "403":
+          description: Authenticated caller is not a parent/guardian
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /devices/register:
+    post:
+      operationId: registerDevice
+      tags: [devices]
+      summary: >
+        Submit platform attestation to complete device registration (ADR-003
+        implementation)
+      security: [{ bearerAuth: [] }]
+      description: >
+        Redeems a previously-issued, single-use challenge and verifies the
+        submitted attestation token server-side (Google Play Integrity
+        Standard API on Android) before ever creating a trusted_devices row.
+        The client can never self-declare trust — every outcome other than a
+        genuine, server-verified PASS leaves the device untrusted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterDeviceBody"
+      responses:
+        "200":
+          description: Attestation verified — the device is now trusted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustedDevice"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: >
+            Unauthenticated, or the challenge is invalid/expired/already
+            consumed/belongs to a different caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "403":
+          description: Attestation was verified but rejected by policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "502":
+          description: The attestation provider could not be reached/verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+        "503":
+          description: No attestation provider is configured in this environment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
   /leave-requests:
     post:
       operationId: createLeaveRequest
       tags: [leave]
       summary: Create a leave request (authenticated student, for themselves only)
+      description: >
+        Creates the request in its initial `pending` state only — this does
+        NOT notify a parent/guardian, and does NOT schedule any escalation
+        job (Reception-Initiated Parent Approval correction). Parent
+        involvement begins only once an authorized staff member explicitly
+        calls `POST /leave-requests/{leaveRequestId}/send-for-parent-approval`.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -175,6 +316,44 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /leave-requests/queue:
+    get:
+      operationId: listStaffLeaveQueue
+      tags: [leave]
+      summary: >
+        Staff-only: the Reception Dashboard's operational leave-request queue
+        (Phase 3, Prompt 7A)
+      description: >
+        Requires an AAL2 (MFA-verified) staff session with role
+        reception_warden, hostel_admin, or super_admin — library_incharge has
+        no grant on leave_requests and receives 403, matching
+        POST /leave-requests/{leaveRequestId}/expire's existing role set.
+        reception_warden and hostel_admin see only leave requests belonging
+        to students in their own assigned hostel, resolved entirely
+        server-side from the authenticated caller's own staff row — never a
+        client-supplied filter; super_admin sees every hostel's requests.
+        Ordered newest-created first, with the leave request id as a stable
+        secondary sort key so realtime updates never reorder unrelated rows.
+        Each item is enriched with the minimum student/hostel/room context
+        the queue table needs (roll number, full name, hostel name, room
+        number) via existing, already-authorized joins — never any parent
+        identity, contact detail, or SAP/mentor-approval data, neither of
+        which this endpoint has any access to.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The caller's operationally-visible leave request queue.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StaffLeaveQueueItem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /leave-requests/{leaveRequestId}:
     get:
       operationId: getLeaveRequest
@@ -205,9 +384,13 @@ paths:
       tags: [leave]
       summary: >
         Get a leave request's immutable approval-event timeline (Approval
-        History) — authenticated owning student, or authenticated
-        parent/guardian (relationship-checked). Same authorization/anti-
-        enumeration shape as GET /leave-requests/{leaveRequestId}.
+        History / Parent Approval Session Workspace) — authenticated owning
+        student, authenticated parent/guardian (relationship-checked), or
+        authenticated staff (reception_warden/hostel_admin/super_admin,
+        AAL2-required, hostel-scoped). Same authorization/anti-enumeration
+        shape as GET /leave-requests/{leaveRequestId} for student/parent;
+        staff access mirrors GET /leave-requests/queue's hostel-scoping
+        (Phase 3 Prompt 7B).
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/LeaveRequestId"
@@ -293,6 +476,53 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /leave-requests/{leaveRequestId}/send-for-parent-approval:
+    post:
+      operationId: startParentApproval
+      tags: [leave]
+      summary: >
+        Staff-only: explicitly transition a leave request from `pending`
+        into the parent approval/escalation lifecycle (Reception-Initiated
+        Parent Approval correction). Never automatic — creating a leave
+        request (`POST /leave-requests`) no longer schedules this on its
+        own; a Reception Warden/Hostel Admin/Super Admin must call this
+        endpoint explicitly before any parent notification is dispatched.
+      description: >
+        Requires an AAL2 (MFA-verified) staff session with role
+        reception_warden, hostel_admin, or super_admin — library_incharge
+        has no grant on leave_requests and receives 403, matching every
+        other staff-only leave-request transition. reception_warden/
+        hostel_admin are hostel-scoped to the leave request's own student;
+        super_admin is unscoped. Conditionally transitions `pending` to the
+        first real escalation stage — never any other current status,
+        including a second concurrent call for the same leave request (the
+        underlying conditional database UPDATE is what makes "exactly one
+        caller can ever succeed" a server-enforced invariant, not a
+        frontend one): a losing concurrent call, or any call against a
+        request that is not currently `pending`, receives 409 Conflict.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LeaveRequestId"
+      responses:
+        "200":
+          description: >
+            Parent approval started — the leave request's authoritative new
+            state (the first real escalation stage).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
   /leave-requests/{leaveRequestId}/expire:
     post:
       operationId: expireLeaveRequest
@@ -322,6 +552,1697 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /leave-requests/{leaveRequestId}/exit-authorization:
+    post:
+      operationId: authorizeExit
+      tags: [leave]
+      summary: >
+        Staff-only: record that a student has physically left the hostel for
+        an already-approved leave request (Phase 3, Prompt 7C — Student
+        Verification & Exit Authorization). The final Reception-side
+        checkpoint before departure.
+      description: >
+        Requires an AAL2 (MFA-verified) staff session with role
+        reception_warden, hostel_admin, or super_admin — library_incharge
+        has no grant and receives 403, matching every other staff-only
+        leave-request transition. reception_warden/hostel_admin are
+        hostel-scoped to the leave request's own student; super_admin is
+        unscoped. Requires the leave request to currently be `approved`
+        (parent approval genuinely complete) and an explicit
+        `identityConfirmed: true` body field — a staff attestation that the
+        person at reception has been visually confirmed to match the
+        student's identity; this cannot be independently re-verified by the
+        server and is never defaulted or inferred. KIIT SAP mentor approval
+        is NOT checked by this endpoint: no SAP integration exists anywhere
+        in this system, so this endpoint never claims to have verified it —
+        see apps/reception-dashboard/docs/exit-authorization.md. At most one
+        exit authorization may ever exist per leave request — a second call
+        (double-click, retry, or a losing concurrent request) receives 409
+        Conflict, enforced by a database-level uniqueness constraint, not
+        merely application logic.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LeaveRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExitAuthorizationRequest"
+      responses:
+        "201":
+          description: Exit authorized — the new, immutable exit authorization record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExitAuthorization"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /leave-requests/{leaveRequestId}/return:
+    post:
+      operationId: recordHostelReturn
+      tags: [movements]
+      summary: >
+        Staff-only: record that a student has physically returned to the
+        hostel for an already-exited leave request (Phase 4, Prompt 9 —
+        Student Movement Management System, Hostel Return)
+      description: >
+        Requires an AAL2 (MFA-verified) staff session with role
+        reception_warden, hostel_admin, or super_admin — library_incharge
+        has no grant and receives 403, matching every other staff-only
+        leave-request transition. reception_warden/hostel_admin are
+        hostel-scoped to the leave request's own student; super_admin is
+        unscoped. Requires the leave request to currently be `approved`
+        AND to already have a real exit authorization recorded
+        (GET /students/{rollNumber}'s `currentLeave.exitAuthorized`) —
+        "Exit Authorized" (a staff attestation) is this system's only
+        authoritative record of departure; a return can never be recorded
+        for a leave that was never actually exited. At most one hostel
+        return may ever exist per leave request — a second call
+        (double-click, retry, or a losing concurrent request) receives 409
+        Conflict, enforced by a database-level uniqueness constraint, not
+        merely application logic. This action is part of the generic
+        Movement Engine (packages/db/src/schema/movement.ts) but is the
+        ONLY movement type currently implemented.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LeaveRequestId"
+      responses:
+        "201":
+          description: Return recorded — the new, immutable movement record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostelReturn"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /emergencies:
+    get:
+      operationId: listEmergencies
+      tags: [emergencies]
+      summary: >
+        Staff-only: server-side paginated/filtered incident queue (Phase 4,
+        Prompt 10 — Emergency Operations Center)
+      description: >
+        Requires an AAL2 staff session with role reception_warden,
+        hostel_admin, or super_admin — library_incharge has no grant.
+        reception_warden/hostel_admin are hostel-scoped to their own
+        assigned hostel, resolved entirely server-side; super_admin is
+        unscoped. Only the 8 EOC emergency categories are ever returned —
+        never the separate, still-unbuilt checkpoint-monitoring domain's
+        `missed_checkpoint`/`manual_flag` rows. `q` matches a
+        case-insensitive PREFIX against the linked student's full_name OR
+        roll_number, mirroring `searchStudents`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 200 }
+        - name: category
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/EmergencyCategory" }
+        - name: severity
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/EmergencySeverity" }
+        - name: status
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/EmergencyStatus" }
+        - name: activeOnly
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: sortBy
+          in: query
+          required: false
+          schema: { type: string, enum: [reportedAt, severity], default: reportedAt }
+        - name: sortDir
+          in: query
+          required: false
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: A page of incidents within the caller's authorized scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: reportEmergency
+      tags: [emergencies]
+      summary: >
+        Staff-only: log a new incident report (Phase 4, Prompt 10)
+      description: >
+        A genuine, honest reception-desk capability — a staff member records
+        an incident they became aware of (phone call, walk-in report, direct
+        observation). The intended Student Application "Emergency Trigger"
+        producer described in the product roadmap does not exist anywhere in
+        this repository (apps/student-mobile is an unmodified template
+        scaffold) — this endpoint is not a substitute for that pipeline, it
+        is the real staff-attestation path this table's original design
+        already established (mirrors the existing `manual_flag` concept).
+        `rollNumber` resolves the student server-side, hostel-scoped
+        identically to every other staff route — never a client-supplied
+        studentId/hostelId/staffId.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rollNumber, category, severity, description]
+              additionalProperties: false
+              properties:
+                rollNumber: { type: string, minLength: 1, maxLength: 100 }
+                category: { $ref: "#/components/schemas/EmergencyCategory" }
+                severity: { $ref: "#/components/schemas/EmergencySeverity" }
+                description: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        "201":
+          description: Incident reported — status `open`, unassigned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyDetail"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Roll number does not resolve to a student in the caller's scope.
+
+  /emergencies/statistics:
+    get:
+      operationId: getEmergencyStatistics
+      tags: [emergencies]
+      summary: >
+        Staff-only: server-derived active-incident counts for the EOC's
+        statistics strip (Phase 4, Prompt 10)
+      description: >
+        Every count is a fresh aggregate query over the caller's own
+        authorized scope — never a client-supplied or cached number.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyStatistics"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /emergencies/{incidentId}:
+    get:
+      operationId: getEmergency
+      tags: [emergencies]
+      summary: >
+        Staff-only: single incident detail with operational timeline (Phase
+        4, Prompt 10)
+      description: >
+        Returns 404 for both "no such incident" and "exists but outside the
+        caller's hostel scope" — anti-enumeration, matching every other
+        staff detail route in this API.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+      responses:
+        "200":
+          description: The incident and its full timeline.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /emergencies/{incidentId}/acknowledge:
+    post:
+      operationId: acknowledgeEmergency
+      tags: [emergencies]
+      summary: "Staff-only: acknowledge a new incident (open -> acknowledged)"
+      description: >
+        Server-authoritative transition, conditional on the incident's
+        CURRENT status being exactly `open` (a conditional UPDATE ... WHERE
+        status = 'open', the same deterministic, concurrency-safe pattern
+        `decide()`/`markExpired()`/`recordHostelReturn()` already
+        established) — a losing concurrent acknowledge receives 409, never a
+        duplicate audit event. Acknowledging also self-assigns the incident
+        to the caller's own resolved staff identity — never a
+        client-supplied assignee.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+      responses:
+        "200":
+          description: Acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /emergencies/{incidentId}/start-response:
+    post:
+      operationId: startEmergencyResponse
+      tags: [emergencies]
+      summary: "Staff-only: begin active response (acknowledged -> in_progress)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+      responses:
+        "200":
+          description: Response started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /emergencies/{incidentId}/resolve:
+    post:
+      operationId: resolveEmergency
+      tags: [emergencies]
+      summary: "Staff-only: mark an incident resolved (in_progress -> resolved)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+      responses:
+        "200":
+          description: Resolved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /emergencies/{incidentId}/close:
+    post:
+      operationId: closeEmergency
+      tags: [emergencies]
+      summary: "Staff-only: close a resolved incident (resolved -> closed)"
+      description: >
+        Terminal — a closed incident accepts no further transition or note
+        (both return 409).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+      responses:
+        "200":
+          description: Closed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /emergencies/{incidentId}/notes:
+    post:
+      operationId: addEmergencyNote
+      tags: [emergencies]
+      summary: "Staff-only: append an operational note to the incident timeline"
+      description: >
+        Allowed for any non-`closed` status. Immutable once written — this
+        table (security_incident_events) mirrors leave_approval_events's
+        append-only discipline exactly.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/IncidentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              additionalProperties: false
+              properties:
+                note: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        "201":
+          description: Note recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyEvent"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases:
+    get:
+      operationId: listHealthCases
+      tags: [health-cases]
+      summary: >
+        Staff-only: server-side paginated/filtered medical case queue (Phase
+        4, Prompt 11 — Health Operations Center)
+      description: >
+        Requires an AAL2 staff session with role reception_warden,
+        hostel_admin, or super_admin — library_incharge has no grant (this
+        table has no policy for that role at all). reception_warden/
+        hostel_admin are hostel-scoped to their own assigned hostel,
+        resolved entirely server-side; super_admin is unscoped. `q` matches
+        a case-insensitive PREFIX against the linked student's full_name OR
+        roll_number, mirroring `searchStudents`/`listEmergencies`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 200 }
+        - name: studentId
+          in: query
+          required: false
+          description: >
+            Prompt 11 closure (Medical History) — restricts the list to one
+            student's own cases, still fully hostel-scoped. Used by the
+            Health Case Detail page's read-only "Medical History" section
+            to list a student's other cases from this same authoritative
+            table — never a second, duplicated history store.
+          schema: { type: string, format: uuid }
+        - name: category
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/HealthCaseCategory" }
+        - name: severity
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/HealthCaseSeverity" }
+        - name: status
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/HealthCaseStatus" }
+        - name: activeOnly
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: sortBy
+          in: query
+          required: false
+          schema: { type: string, enum: [reportedAt, severity], default: reportedAt }
+        - name: sortDir
+          in: query
+          required: false
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: A page of health cases within the caller's authorized scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: reportHealthCase
+      tags: [health-cases]
+      summary: >
+        Staff-only: log a new medical case report (Phase 4, Prompt 11)
+      description: >
+        A genuine, honest reception-desk capability — a staff member records
+        a medical case they became aware of. No real KIIMS/hospital-system
+        producer exists anywhere in this repository — this endpoint is not a
+        substitute for that future integration, it is the real
+        staff-attestation path this domain's own design establishes (mirrors
+        `reportEmergency`'s identical pattern). `rollNumber` resolves the
+        student server-side, hostel-scoped identically to every other staff
+        route — never a client-supplied studentId/hostelId/staffId/
+        admittedAt. `admittedAt` is set automatically, server-side, when
+        `category` is `hospital_admission` or `emergency_admission`.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rollNumber, category, severity, description]
+              additionalProperties: false
+              properties:
+                rollNumber: { type: string, minLength: 1, maxLength: 100 }
+                category: { $ref: "#/components/schemas/HealthCaseCategory" }
+                severity: { $ref: "#/components/schemas/HealthCaseSeverity" }
+                description: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        "201":
+          description: Case reported — status `new`, unassigned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Roll number does not resolve to a student in the caller's scope.
+
+  /health-cases/statistics:
+    get:
+      operationId: getHealthCaseStatistics
+      tags: [health-cases]
+      summary: >
+        Staff-only: server-derived case counts for the Health Operations
+        Center's statistics strip (Phase 4, Prompt 11)
+      description: >
+        Every count is a fresh aggregate query over the caller's own
+        authorized scope — never a client-supplied or cached number.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseStatistics"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /health-cases/{caseId}:
+    get:
+      operationId: getHealthCase
+      tags: [health-cases]
+      summary: >
+        Staff-only: single case detail with operational timeline (Phase 4,
+        Prompt 11)
+      description: >
+        Returns 404 for both "no such case" and "exists but outside the
+        caller's hostel scope" — anti-enumeration, matching every other
+        staff detail route in this API.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: The case and its full timeline.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /health-cases/{caseId}/acknowledge:
+    post:
+      operationId: acknowledgeHealthCase
+      tags: [health-cases]
+      summary: "Staff-only: acknowledge a new case (new -> acknowledged)"
+      description: >
+        Server-authoritative transition, conditional on the case's CURRENT
+        status being exactly `new` — a losing concurrent acknowledge
+        receives 409, never a duplicate event. Acknowledging also
+        self-assigns the case to the caller's own resolved staff identity —
+        never a client-supplied assignee.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases/{caseId}/cancel:
+    post:
+      operationId: cancelHealthCase
+      tags: [health-cases]
+      summary: "Staff-only: cancel a new case as a false alarm/duplicate (new -> cancelled)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases/{caseId}/start-monitoring:
+    post:
+      operationId: startHealthCaseMonitoring
+      tags: [health-cases]
+      summary: "Staff-only: begin active monitoring (acknowledged -> monitoring)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Monitoring started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases/{caseId}/mark-awaiting-update:
+    post:
+      operationId: markHealthCaseAwaitingUpdate
+      tags: [health-cases]
+      summary: "Staff-only: mark a monitored case as waiting on an external update (monitoring -> awaiting_update)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Marked awaiting update.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases/{caseId}/resume-monitoring:
+    post:
+      operationId: resumeHealthCaseMonitoring
+      tags: [health-cases]
+      summary: "Staff-only: resume monitoring after receiving an update (awaiting_update -> monitoring)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Monitoring resumed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases/{caseId}/resolve:
+    post:
+      operationId: resolveHealthCase
+      tags: [health-cases]
+      summary: "Staff-only: mark a monitored case resolved without admission (monitoring -> resolved)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Resolved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases/{caseId}/discharge:
+    post:
+      operationId: dischargeHealthCase
+      tags: [health-cases]
+      summary: "Staff-only: record discharge for an admitted, monitored case (monitoring -> discharged)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Discharge recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases/{caseId}/close:
+    post:
+      operationId: closeHealthCase
+      tags: [health-cases]
+      summary: "Staff-only: close a resolved or discharged case (resolved|discharged -> closed)"
+      description: >
+        Terminal — a closed case accepts no further transition or note (both
+        return 409).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Closed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /health-cases/{caseId}/notes:
+    post:
+      operationId: addHealthCaseNote
+      tags: [health-cases]
+      summary: "Staff-only: append an operational note to the case timeline"
+      description: >
+        Allowed for any status except `closed`/`cancelled`. Immutable once
+        written — this table (health_case_events) mirrors
+        security_incident_events'/leave_approval_events' append-only
+        discipline exactly.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              additionalProperties: false
+              properties:
+                note: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        "201":
+          description: Note recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCaseEvent"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /students:
+    get:
+      operationId: searchStudents
+      tags: [students]
+      summary: >
+        Staff-only: server-side student search (Phase 4, Prompt 8 — Student
+        Operations Center)
+      description: >
+        Requires an AAL2 (MFA-verified) staff session with role
+        reception_warden, hostel_admin, or super_admin — matching every
+        other certified staff-only leave/student route's role set and
+        AAL2/hostel-scope shape exactly. reception_warden and hostel_admin
+        see only students in their own assigned hostel, resolved entirely
+        server-side from the authenticated caller's own staff row — never a
+        client-supplied filter; super_admin is unscoped. `q`, when
+        supplied, matches a case-insensitive PREFIX against full_name OR
+        roll_number — the only two fields this system's authoritative
+        `students` schema indexes for search; no department/program/gender/
+        phone/academic-year field exists anywhere in this schema; none is
+        exposed. Deterministically ordered (the requested sort field plus
+        the student's own id as a tie-breaker) and paginated server-side —
+        never the caller's whole in-scope population downloaded and
+        filtered client-side.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 200
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: sortBy
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [fullName, rollNumber]
+            default: fullName
+        - name: sortDir
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        "200":
+          description: The caller's operationally-visible, paginated student search result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentSearchResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /students/{rollNumber}:
+    get:
+      operationId: getStudentProfile
+      tags: [students]
+      summary: >
+        Staff-only: read-only student profile (Phase 4, Prompt 8 — Student
+        Operations Center)
+      description: >
+        Same AAL2/role/hostel-scope shape as GET /students. Returns only
+        authoritative DigiHostel data — identity, hostel/room, linked
+        parent/guardian contact (name, relationship, phone only — never
+        internal ids or authentication identifiers), and the student's own
+        most recent DigiHostel Hostel Leaving Request with its immutable
+        approval-event timeline, reused unmutated from the certified Parent
+        Approval / Exit Authorization workflow (never the separate KIIT SAP
+        Holiday Request concept, which has no integration anywhere in this
+        system). A roll number that does not exist, or that exists outside
+        the caller's hostel scope, is deliberately indistinguishable (404,
+        anti-enumeration) — identical shape to
+        GET /leave-requests/{leaveRequestId}.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: rollNumber
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: The student's read-only operational profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentProfile"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /audit:
+    get:
+      operationId: listAuditEvents
+      tags: [audit]
+      summary: >
+        Staff-only: server-side paginated/filtered read over audit_logs
+        (Phase 5, Prompt 12 — Enterprise Audit Center)
+      description: >
+        Requires an AAL2 staff session with role reception_warden,
+        hostel_admin, or super_admin — library_incharge has no grant on
+        `audit:view`. `audit_logs` itself has zero client-facing RLS by
+        design; this is the sole privileged, staff-authorized read path.
+        `audit_logs` carries no hostel_id column — hostel scope is derived
+        server-side per row by joining entity_id back to the owning domain
+        table (leave_requests/security_incidents/health_cases -> students,
+        or staff directly). Rows whose entity_type has no such join
+        (trusted_devices, device_registration_challenges — parent-security
+        events with no hostel concept) are visible only to super_admin.
+        reception_warden/hostel_admin are hostel-scoped to their own
+        assigned hostel, resolved entirely server-side; super_admin is
+        unscoped. `q` matches a case-insensitive PREFIX against the
+        resolved student's full_name/roll_number OR the resolved actor's
+        name, mirroring `searchStudents`/`listEmergencies`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 200 }
+        - name: module
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/AuditModule" }
+        - name: actorType
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/AuditActorType" }
+        - name: entityType
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/AuditEntityType" }
+        - name: dateFrom
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: dateTo
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: sortDir
+          in: query
+          required: false
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: A page of audit events within the caller's authorized scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditList"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /audit/statistics:
+    get:
+      operationId: getAuditStatistics
+      tags: [audit]
+      summary: >
+        Staff-only: today's event counts within the caller's scope, by
+        module (Phase 5, Prompt 12)
+      description: >
+        Same authorization/hostel-scope boundary as GET /audit. Every field
+        is a fresh aggregate query over the caller's own authorized scope,
+        never a client-supplied or cached number.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Real, scope-derived audit statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditStatistics"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /staff:
+    get:
+      operationId: listStaff
+      tags: [staff]
+      summary: >
+        super_admin-only: server-side paginated/filtered staff directory
+        (Phase 5, Prompt 13 — Identity & Access Administration Center)
+      description: >
+        Requires an AAL2 super_admin session — the first super_admin-only
+        endpoint in this API family (every other staff-facing route uses
+        the standard reception_warden/hostel_admin/super_admin set).
+        Matches `staff`'s own pre-existing `staff_all_super_admin` RLS
+        grant exactly. `q` matches a case-insensitive PREFIX against
+        full_name OR email.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 200 }
+        - name: role
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/StaffAdminRole" }
+        - name: status
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/StaffAdminStatus" }
+        - name: hostelId
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: sortDir
+          in: query
+          required: false
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: A page of staff accounts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffList"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createStaff
+      tags: [staff]
+      summary: >
+        super_admin-only: provision a new staff account (Phase 5, Prompt 13)
+      description: >
+        Creates a real Supabase Auth `auth.users` row via the Admin API
+        (no password is generated, stored, or returned by this backend —
+        Supabase's own invite email carries a secure link for the new
+        staff member to set their own initial password) and, in the same
+        logical operation, the corresponding `staff` row. If the `staff`
+        insert fails after the auth user was created, the orphaned auth
+        user is deleted as a compensating action.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fullName, email, role, hostelId]
+              additionalProperties: false
+              properties:
+                fullName: { type: string, minLength: 1, maxLength: 200 }
+                email: { type: string, format: email, maxLength: 255 }
+                role: { $ref: "#/components/schemas/StaffAdminRole" }
+                hostelId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: >
+                    Required (non-null) for reception_warden/hostel_admin —
+                    their entire authority is hostel-scoped. May be null
+                    for library_incharge/super_admin.
+      responses:
+        "201":
+          description: The newly created staff account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAdmin"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A staff account with this email already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /staff/statistics:
+    get:
+      operationId: getStaffStatistics
+      tags: [staff]
+      summary: "super_admin-only: staff counts by role/status (Phase 5, Prompt 13)"
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Real, database-derived staff statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffStatistics"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /staff/{staffId}:
+    get:
+      operationId: getStaff
+      tags: [staff]
+      summary: "super_admin-only: staff account detail (Phase 5, Prompt 13)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/StaffId"
+      responses:
+        "200":
+          description: The staff account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAdmin"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /staff/{staffId}/role:
+    patch:
+      operationId: changeStaffRole
+      tags: [staff]
+      summary: "super_admin-only: change a staff member's role (Phase 5, Prompt 13)"
+      description: >
+        Refuses to target the caller's OWN staff id (self-escalation
+        defense) and refuses to demote the last remaining active
+        super_admin (409).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/StaffId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              additionalProperties: false
+              properties:
+                role: { $ref: "#/components/schemas/StaffAdminRole" }
+      responses:
+        "200":
+          description: The updated staff account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAdmin"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Self-target or last-active-super_admin protection triggered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /staff/{staffId}/hostel:
+    patch:
+      operationId: changeStaffHostel
+      tags: [staff]
+      summary: "super_admin-only: change a staff member's hostel assignment (Phase 5, Prompt 13)"
+      description: >
+        Refuses to target the caller's OWN staff id. A null hostelId is
+        rejected if the target's CURRENT role requires one
+        (reception_warden/hostel_admin).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/StaffId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostelId]
+              additionalProperties: false
+              properties:
+                hostelId: { type: string, format: uuid, nullable: true }
+      responses:
+        "200":
+          description: The updated staff account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAdmin"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /staff/{staffId}/status:
+    patch:
+      operationId: changeStaffStatus
+      tags: [staff]
+      summary: "super_admin-only: suspend or reactivate a staff member (Phase 5, Prompt 13)"
+      description: >
+        Enforcement is request-time, not merely cosmetic: a suspended
+        staff member's very next authenticated request fails with 401
+        (see `apps/reception-dashboard/docs/identity-admin.md`). Refuses
+        to target the caller's OWN staff id and refuses to suspend the
+        last remaining active super_admin (409).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/StaffId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              additionalProperties: false
+              properties:
+                status: { $ref: "#/components/schemas/StaffAdminStatus" }
+      responses:
+        "200":
+          description: The updated staff account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAdmin"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Self-target or last-active-super_admin protection triggered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /staff/{staffId}/reset-password:
+    post:
+      operationId: resetStaffPassword
+      tags: [staff]
+      summary: >
+        super_admin-only: trigger a password-reset email for a staff
+        member (Phase 5, Prompt 13)
+      description: >
+        Triggers Supabase Auth's own password-recovery email — this
+        backend never generates, stores, returns, or logs a password.
+        Refuses to target the caller's OWN staff id.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/StaffId"
+      responses:
+        "202":
+          description: The reset email was triggered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties: { status: { type: string } }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /staff/{staffId}/force-sign-out:
+    post:
+      operationId: forceSignOutStaff
+      tags: [staff]
+      summary: >
+        super_admin-only: revoke every active session for a staff member
+        (Phase 5, Prompt 13)
+      description: >
+        Calls Supabase Auth's Admin API `signOut(userId, "global")` — a
+        blunt, whole-account revocation (this SDK surface does not expose
+        a per-session list to revoke individually). Refuses to target the
+        caller's OWN staff id.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/StaffId"
+      responses:
+        "202":
+          description: All sessions for this staff member were revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties: { status: { type: string } }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /configuration/domains:
+    get:
+      operationId: listConfigurationDomains
+      tags: [configuration]
+      summary: "hostel_admin/super_admin: the fixed, application-validated list of configuration domains (Phase 5, Prompt 14)"
+      description: >
+        A static, server-owned allow-list (`domain` on `configuration_entries`
+        is `text`, not a database enum — this endpoint is the actual source
+        of truth a client should render as options, never a hard-coded
+        frontend copy of the list).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The recognized configuration domains.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [domains]
+                properties:
+                  domains:
+                    type: array
+                    items: { $ref: "#/components/schemas/ConfigurationDomain" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /configuration/statistics:
+    get:
+      operationId: getConfigurationStatistics
+      tags: [configuration]
+      summary: "hostel_admin/super_admin: configuration entry counts by domain, within the caller's scope (Phase 5, Prompt 14)"
+      description: >
+        hostel_admin sees counts across every global entry plus only their
+        own hostel's entries; super_admin is unscoped.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Real, database-derived configuration statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationStatistics"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /configuration/validate:
+    post:
+      operationId: validateConfiguration
+      tags: [configuration]
+      summary: "hostel_admin/super_admin: stateless validation preview — never persists anything (Phase 5, Prompt 14)"
+      description: >
+        Runs the EXACT SAME validation `POST /configuration` applies before
+        writing (key format/domain allow-list/value-type consistency/scope-
+        hostel consistency/hostel existence) without persisting anything —
+        the Configuration Editor's "Preview" step. Does not check
+        hostel-scope authorization or duplicate-key conflicts (those depend
+        on the specific create/update call this preview does not perform).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain, key, value, valueType, scope, hostelId]
+              additionalProperties: false
+              properties:
+                domain: { $ref: "#/components/schemas/ConfigurationDomain" }
+                key: { type: string, minLength: 1, maxLength: 100 }
+                value: {}
+                valueType: { $ref: "#/components/schemas/ConfigurationValueType" }
+                scope: { $ref: "#/components/schemas/ConfigurationScope" }
+                hostelId: { type: string, format: uuid, nullable: true }
+      responses:
+        "200":
+          description: The validation result — always 200, even when invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationValidationResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /configuration:
+    get:
+      operationId: listConfiguration
+      tags: [configuration]
+      summary: "hostel_admin/super_admin: the configuration directory, server-side paginated/filtered/sorted (Phase 5, Prompt 14)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: domain
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/ConfigurationDomain" }
+        - name: scope
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/ConfigurationScope" }
+        - name: hostelId
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+        - name: isActive
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 200 }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: sortDir
+          in: query
+          required: false
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: A page of configuration entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationList"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createConfigurationEntry
+      tags: [configuration]
+      summary: "hostel_admin/super_admin: create a configuration entry (Phase 5, Prompt 14)"
+      description: >
+        A hostel_admin may only create a `"scope": "hostel"` entry naming
+        their OWN hostel — never a global entry, never another hostel's
+        (`403`). super_admin is unscoped. Never stores a secret — a
+        key/domain resembling password/token/API key/credential is
+        rejected (`400`).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain, key, value, valueType, scope, hostelId]
+              additionalProperties: false
+              properties:
+                domain: { $ref: "#/components/schemas/ConfigurationDomain" }
+                key: { type: string, minLength: 1, maxLength: 100 }
+                value: {}
+                valueType: { $ref: "#/components/schemas/ConfigurationValueType" }
+                description: { type: string, maxLength: 2000, nullable: true }
+                scope: { $ref: "#/components/schemas/ConfigurationScope" }
+                hostelId: { type: string, format: uuid, nullable: true }
+      responses:
+        "201":
+          description: The newly created configuration entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: A configuration entry for this domain/key already exists at this scope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /configuration/{entryId}:
+    get:
+      operationId: getConfigurationEntry
+      tags: [configuration]
+      summary: "hostel_admin/super_admin: configuration entry detail (Phase 5, Prompt 14)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ConfigurationEntryId"
+      responses:
+        "200":
+          description: The configuration entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationEntry"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateConfigurationEntry
+      tags: [configuration]
+      summary: "hostel_admin/super_admin: update a configuration entry's value/description/active state (Phase 5, Prompt 14)"
+      description: >
+        Optimistic concurrency: `expectedVersion` must match the entry's
+        current `version` or the update is refused (`409`) rather than
+        silently overwriting a concurrent change. A hostel_admin may only
+        update an entry within their own hostel scope (`403`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ConfigurationEntryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              additionalProperties: false
+              properties:
+                expectedVersion: { type: integer, minimum: 1 }
+                value: {}
+                description: { type: string, maxLength: 2000, nullable: true }
+                isActive: { type: boolean }
+      responses:
+        "200":
+          description: The updated configuration entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Stale version — the entry changed since the caller last read it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -333,6 +2254,38 @@ components:
   parameters:
     LeaveRequestId:
       name: leaveRequestId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    IncidentId:
+      name: incidentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    StaffId:
+      name: staffId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    ConfigurationEntryId:
+      name: entryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    CaseId:
+      name: caseId
       in: path
       required: true
       schema:
@@ -398,6 +2351,72 @@ components:
         studentId:
           type: string
           format: uuid
+        reason:
+          type: string
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        status:
+          $ref: "#/components/schemas/LeaveRequestStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    StaffLeaveQueueItem:
+      type: object
+      description: >
+        A leave_requests row enriched with the minimum student/hostel/room
+        context the Reception Dashboard's queue table needs — never a parent
+        identity or contact detail (staff have no legitimate reason to see
+        that here, docs/rls-policy-matrix.md), and never any KIIT SAP/mentor-
+        approval field (no such data source is wired to this endpoint — see
+        apps/reception-dashboard/docs/leave-queue.md).
+      required:
+        - id
+        - studentId
+        - studentRollNumber
+        - studentFullName
+        - studentHostelId
+        - studentHostelName
+        - studentRoomId
+        - studentRoomNumber
+        - reason
+        - startDate
+        - endDate
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        studentRollNumber:
+          type: string
+        studentFullName:
+          type: string
+        studentHostelId:
+          type: string
+          format: uuid
+          nullable: true
+        studentHostelName:
+          type: string
+          nullable: true
+        studentRoomId:
+          type: string
+          format: uuid
+          nullable: true
+        studentRoomNumber:
+          type: string
+          nullable: true
         reason:
           type: string
         startDate:
@@ -481,10 +2500,62 @@ components:
         biometricAssertion:
           $ref: "#/components/schemas/BiometricAssertion"
 
+    ExitAuthorizationRequest:
+      type: object
+      description: >
+        Phase 3, Prompt 7C. `identityConfirmed` must be the literal `true` —
+        a staff attestation that the person at reception has been visually
+        confirmed to match the student's identity, never independently
+        re-derivable by the server. No other field is accepted: in
+        particular, no client-supplied mentorApproved/parentApproved/
+        staffId/studentId/hostelId/role/authorizationStatus/exitTimestamp
+        value has any effect on authorization, which is resolved entirely
+        server-side from the authenticated caller's own staff profile.
+      required: [identityConfirmed]
+      additionalProperties: false
+      properties:
+        identityConfirmed:
+          type: boolean
+          enum: [true]
+
+    ExitAuthorization:
+      type: object
+      description: >
+        One immutable leave_exit_authorizations row — the authoritative
+        record that a student physically left the hostel for a specific
+        leave request. Deliberately excludes which specific staff member
+        authorized it (same actor-identity-omission discipline as
+        LeaveApprovalEvent).
+      required: [id, leaveRequestId, identityConfirmed, authorizedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        leaveRequestId:
+          type: string
+          format: uuid
+        identityConfirmed:
+          type: boolean
+        authorizedAt:
+          type: string
+          format: date-time
+
     ParentRelationshipType:
       type: string
       description: Mirrors packages/db/src/schema/enums.ts's parent_relationship_type enum.
       enum: [father, mother, guardian]
+
+    StaffAuthEventBody:
+      type: object
+      description: >
+        Only events reportable while still holding a valid bearer token — see
+        POST /auth/staff/audit-events's own description.
+      required: [event]
+      additionalProperties: false
+      properties:
+        event:
+          type: string
+          enum: [sign_in_success, mfa_success, mfa_failure, sign_out]
 
     RequestOtpBody:
       type: object
@@ -527,6 +2598,75 @@ components:
           type: string
           format: uuid
 
+    DevicePlatform:
+      type: string
+      description: Mirrors packages/db/src/schema/enums.ts's device_platform enum.
+      enum: [android, ios]
+
+    RequestDeviceChallengeBody:
+      type: object
+      required: [platform]
+      additionalProperties: false
+      properties:
+        platform:
+          $ref: "#/components/schemas/DevicePlatform"
+
+    DeviceChallenge:
+      type: object
+      required: [challengeId, nonce, expiresAt]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        nonce:
+          type: string
+          description: >
+            Pass this exact value into the platform attestation call (e.g.
+            Play Integrity's requestHash/nonce parameter) so the resulting
+            token is cryptographically bound to this specific challenge.
+        expiresAt:
+          type: string
+          format: date-time
+
+    RegisterDeviceBody:
+      type: object
+      required: [challengeId, platform, attestationToken, deviceFingerprint]
+      additionalProperties: false
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        platform:
+          $ref: "#/components/schemas/DevicePlatform"
+        attestationToken:
+          type: string
+          minLength: 1
+          description: >
+            The opaque token the platform attestation API produced (a Play
+            Integrity integrity token on Android) — never inspected or
+            decoded by the client, only relayed to the backend.
+        deviceFingerprint:
+          type: string
+          minLength: 1
+          description: >
+            This installation's own random, app-generated identifier
+            (services/deviceIdentity — never a hardware serial/IMEI/Android
+            ID), used only to recognize the same installation on a future
+            listTrustedDevices() call, never as attestation proof itself.
+
+    TrustedDevice:
+      type: object
+      required: [id, platform, registeredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          $ref: "#/components/schemas/DevicePlatform"
+        registeredAt:
+          type: string
+          format: date-time
+
     OtpVerificationResult:
       type: object
       description: >
@@ -563,6 +2703,796 @@ components:
                 to correlate a client-visible failure with server-side logs.
                 Not present on typed domain errors that routes map to a
                 response themselves (e.g. leave-request 404/409).
+
+    StudentSearchResultItem:
+      type: object
+      description: >
+        Deliberately narrower than the full `students` row — never
+        `authUserId` (an internal identity-linkage field with no product
+        purpose on a staff-facing read surface). No department/program/
+        semester/gender/phone/photograph field is represented anywhere in
+        this schema — none exists in the authoritative `students` table.
+      required: [id, rollNumber, fullName, hostelId, hostelName, roomId, roomNumber]
+      properties:
+        id:
+          type: string
+          format: uuid
+        rollNumber:
+          type: string
+        fullName:
+          type: string
+        hostelId:
+          type: string
+          format: uuid
+          nullable: true
+        hostelName:
+          type: string
+          nullable: true
+        roomId:
+          type: string
+          format: uuid
+          nullable: true
+        roomNumber:
+          type: string
+          nullable: true
+
+    StudentSearchResult:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/StudentSearchResultItem"
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    StudentGuardian:
+      type: object
+      description: >
+        One linked parent/guardian, minimized to exactly what the Student
+        Operations Center profile needs — never an internal id or
+        authentication identifier.
+      required: [fullName, relationshipType, phoneNumber]
+      properties:
+        fullName:
+          type: string
+        relationshipType:
+          $ref: "#/components/schemas/ParentRelationshipType"
+        phoneNumber:
+          type: string
+
+    StudentCurrentLeave:
+      type: object
+      description: >
+        The student's own most recent DigiHostel Hostel Leaving Request —
+        reused, unmutated, read-only data from the certified Parent
+        Approval / Exit Authorization workflow. Never the separate KIIT SAP
+        Holiday Request concept.
+      required:
+        - id
+        - status
+        - reason
+        - startDate
+        - endDate
+        - createdAt
+        - updatedAt
+        - exitAuthorized
+        - exitAuthorizedAt
+        - returnRecorded
+        - returnedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/LeaveRequestStatus"
+        reason:
+          type: string
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        exitAuthorized:
+          type: boolean
+        exitAuthorizedAt:
+          type: string
+          format: date-time
+          nullable: true
+        returnRecorded:
+          type: boolean
+        returnedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    StudentTimelineEvent:
+      type: object
+      description: >
+        One immutable leave_approval_events row for the student's current
+        leave request — same actor-omission discipline as
+        LeaveApprovalEvent: never reveals which specific parent/guardian/
+        staff member acted.
+      required: [id, eventType, response, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          enum: [notified, responded, escalated, expired, manual_override]
+        response:
+          type: string
+          enum: [approved, rejected, no_response]
+          nullable: true
+        occurredAt:
+          type: string
+          format: date-time
+
+    HostelPresence:
+      type: string
+      description: >
+        Server-derived, never persisted. "outside_hostel" iff the student's
+        own current leave request is genuinely exit-authorized and has no
+        return recorded yet; "inside_hostel" otherwise (including "no leave
+        request at all"). Never trust a client-supplied value for this —
+        it is computed entirely server-side from leave_exit_authorizations
+        and movements (Phase 4, Prompt 9 remediation).
+      enum: [inside_hostel, outside_hostel]
+
+    StudentProfile:
+      type: object
+      required:
+        - id
+        - rollNumber
+        - fullName
+        - hostelId
+        - hostelName
+        - roomId
+        - roomNumber
+        - guardians
+        - currentLeave
+        - timeline
+        - hostelPresence
+      properties:
+        id:
+          type: string
+          format: uuid
+        rollNumber:
+          type: string
+        fullName:
+          type: string
+        hostelId:
+          type: string
+          format: uuid
+          nullable: true
+        hostelName:
+          type: string
+          nullable: true
+        roomId:
+          type: string
+          format: uuid
+          nullable: true
+        roomNumber:
+          type: string
+          nullable: true
+        guardians:
+          type: array
+          items:
+            $ref: "#/components/schemas/StudentGuardian"
+        currentLeave:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/StudentCurrentLeave"
+        timeline:
+          type: array
+          items:
+            $ref: "#/components/schemas/StudentTimelineEvent"
+        hostelPresence:
+          $ref: "#/components/schemas/HostelPresence"
+
+    HostelReturn:
+      type: object
+      description: >
+        A recorded Movement Engine row (movement_type = hostel_return) —
+        deliberately narrower than the full `movements` row, never
+        `recordedByStaffId` (actor identity is never revealed to a client,
+        matching ExitAuthorization's identical discipline).
+      required: [id, leaveRequestId, studentId, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        leaveRequestId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+
+    EmergencyCategory:
+      type: string
+      description: >
+        The 8 categories added to security_incident_type for the Emergency
+        Operations Center (Phase 4, Prompt 10). The table's original two
+        values (missed_checkpoint, manual_flag) belong to the separate,
+        still-unbuilt Digital Library Pass checkpoint-monitoring domain and
+        are never returned/accepted here.
+      enum:
+        - medical
+        - personal_safety
+        - fire
+        - security_threat
+        - violence
+        - infrastructure
+        - harassment
+        - other
+
+    EmergencySeverity:
+      type: string
+      enum: [critical, high, medium, low, informational]
+
+    EmergencyStatus:
+      type: string
+      description: >
+        The EOC's own 5-state lifecycle. `escalated` (a value that exists on
+        the underlying column for the separate checkpoint-monitoring domain)
+        is deliberately not part of this API's vocabulary — no concrete EOC
+        requirement justifies exposing it.
+      enum: [open, acknowledged, in_progress, resolved, closed]
+
+    EmergencyEventType:
+      type: string
+      enum: [created, acknowledged, response_started, note_added, resolved, closed]
+
+    EmergencyEvent:
+      type: object
+      description: >
+        One immutable security_incident_events row — the EOC's own
+        operational timeline (mirrors LeaveApprovalEvent's shape). Unlike
+        LeaveApprovalEvent, actor identity (a staff member's name) IS
+        included: this domain is staff-only end to end, so showing which
+        colleague acted carries none of the student/parent-facing
+        disclosure concern that discipline exists to prevent elsewhere.
+      required: [id, eventType, note, actorStaffName, occurredAt]
+      properties:
+        id: { type: string, format: uuid }
+        eventType: { $ref: "#/components/schemas/EmergencyEventType" }
+        note: { type: string, nullable: true }
+        actorStaffName: { type: string, nullable: true }
+        occurredAt: { type: string, format: date-time }
+
+    EmergencyListItem:
+      type: object
+      description: >
+        Deliberately minimal student identification (name/roll number/
+        hostel/room) — reused DISPLAY fields only, never a duplicated
+        guardian/leave query. Use "Open Student Profile" (the existing
+        Student Operations Center) for anything more.
+      required:
+        - id
+        - studentId
+        - studentFullName
+        - studentRollNumber
+        - hostelId
+        - hostelName
+        - roomNumber
+        - category
+        - severity
+        - status
+        - reportedAt
+        - assignedStaffId
+        - assignedStaffName
+      properties:
+        id: { type: string, format: uuid }
+        studentId: { type: string, format: uuid }
+        studentFullName: { type: string }
+        studentRollNumber: { type: string }
+        hostelId: { type: string, format: uuid, nullable: true }
+        hostelName: { type: string, nullable: true }
+        roomNumber: { type: string, nullable: true }
+        category: { $ref: "#/components/schemas/EmergencyCategory" }
+        severity: { $ref: "#/components/schemas/EmergencySeverity" }
+        status: { $ref: "#/components/schemas/EmergencyStatus" }
+        reportedAt: { type: string, format: date-time }
+        assignedStaffId: { type: string, format: uuid, nullable: true }
+        assignedStaffName: { type: string, nullable: true }
+
+    EmergencyList:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/EmergencyListItem" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    EmergencyDetail:
+      allOf:
+        - $ref: "#/components/schemas/EmergencyListItem"
+        - type: object
+          required: [description, resolvedAt, closedAt, timeline]
+          properties:
+            description: { type: string, nullable: true }
+            resolvedAt: { type: string, format: date-time, nullable: true }
+            closedAt: { type: string, format: date-time, nullable: true }
+            timeline:
+              type: array
+              items: { $ref: "#/components/schemas/EmergencyEvent" }
+
+    EmergencyStatistics:
+      type: object
+      description: >
+        Server-derived, active-incident counts — every field a fresh
+        aggregate query over the caller's own authorized scope, never a
+        client-supplied or cached number.
+      required: [active, critical, open, acknowledged, inProgress, resolvedToday]
+      properties:
+        active: { type: integer }
+        critical: { type: integer }
+        open: { type: integer }
+        acknowledged: { type: integer }
+        inProgress: { type: integer }
+        resolvedToday: { type: integer }
+
+    HealthCaseCategory:
+      type: string
+      description: >
+        Phase 4, Prompt 11 — Health Operations Center's own case category
+        vocabulary (health_cases.category — a new table, not an extension of
+        security_incidents; see health-cases path/domain doc comments for
+        the full reconnaissance).
+      enum:
+        - hospital_admission
+        - medical_observation
+        - emergency_admission
+        - outpatient_visit
+        - discharge
+        - medical_follow_up
+        - accident
+        - other_medical_event
+
+    HealthCaseSeverity:
+      type: string
+      description: >
+        Reuses the Emergency Operations Center's own severity vocabulary
+        directly (no competing concept).
+      enum: [critical, high, medium, low, informational]
+
+    HealthCaseStatus:
+      type: string
+      description: >
+        The Health Operations Center's own 8-state lifecycle — materially
+        different from the EOC's 5-state open->closed matrix (monitoring/
+        awaiting_update/admission/discharge concepts have no EOC
+        equivalent).
+      enum:
+        [new, acknowledged, monitoring, awaiting_update, resolved, discharged, closed, cancelled]
+
+    HealthCaseEventType:
+      type: string
+      enum:
+        - created
+        - acknowledged
+        - monitoring_started
+        - awaiting_update
+        - update_received
+        - note_added
+        - resolved
+        - discharge_recorded
+        - closed
+        - cancelled
+
+    HealthCaseEvent:
+      type: object
+      description: >
+        One immutable health_case_events row — this domain's own operational
+        timeline (mirrors EmergencyEvent's shape). Staff-only end to end, so
+        actor identity is included, same reasoning as EmergencyEvent.
+      required: [id, eventType, note, actorStaffName, occurredAt]
+      properties:
+        id: { type: string, format: uuid }
+        eventType: { $ref: "#/components/schemas/HealthCaseEventType" }
+        note: { type: string, nullable: true }
+        actorStaffName: { type: string, nullable: true }
+        occurredAt: { type: string, format: date-time }
+
+    HealthCaseListItem:
+      type: object
+      description: >
+        Deliberately minimal student identification (name/roll number/
+        hostel/room) — reused DISPLAY fields only, never a duplicated
+        guardian/leave query. Use "Open Student Profile" (the existing
+        Student Operations Center) for anything more.
+      required:
+        - id
+        - studentId
+        - studentFullName
+        - studentRollNumber
+        - hostelId
+        - hostelName
+        - roomNumber
+        - category
+        - severity
+        - status
+        - reportedAt
+        - admittedAt
+        - latestUpdateAt
+        - assignedStaffId
+        - assignedStaffName
+      properties:
+        id: { type: string, format: uuid }
+        studentId: { type: string, format: uuid }
+        studentFullName: { type: string }
+        studentRollNumber: { type: string }
+        hostelId: { type: string, format: uuid, nullable: true }
+        hostelName: { type: string, nullable: true }
+        roomNumber: { type: string, nullable: true }
+        category: { $ref: "#/components/schemas/HealthCaseCategory" }
+        severity: { $ref: "#/components/schemas/HealthCaseSeverity" }
+        status: { $ref: "#/components/schemas/HealthCaseStatus" }
+        reportedAt: { type: string, format: date-time }
+        admittedAt: { type: string, format: date-time, nullable: true }
+        latestUpdateAt: { type: string, format: date-time }
+        assignedStaffId: { type: string, format: uuid, nullable: true }
+        assignedStaffName: { type: string, nullable: true }
+
+    HealthCaseList:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/HealthCaseListItem" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    HealthCaseDetail:
+      allOf:
+        - $ref: "#/components/schemas/HealthCaseListItem"
+        - type: object
+          required: [description, resolvedAt, dischargedAt, closedAt, cancelledAt, timeline]
+          properties:
+            description: { type: string, nullable: true }
+            resolvedAt: { type: string, format: date-time, nullable: true }
+            dischargedAt: { type: string, format: date-time, nullable: true }
+            closedAt: { type: string, format: date-time, nullable: true }
+            cancelledAt: { type: string, format: date-time, nullable: true }
+            timeline:
+              type: array
+              items: { $ref: "#/components/schemas/HealthCaseEvent" }
+
+    HealthCaseStatistics:
+      type: object
+      description: >
+        Server-derived counts — every field a fresh aggregate query over the
+        caller's own authorized scope, never a client-supplied or cached
+        number.
+      required:
+        [active, critical, newCases, monitoring, awaitingUpdate, admittedToday, dischargedToday]
+      properties:
+        active: { type: integer }
+        critical: { type: integer }
+        newCases: { type: integer }
+        monitoring: { type: integer }
+        awaitingUpdate: { type: integer }
+        admittedToday: { type: integer }
+        dischargedToday: { type: integer }
+
+    AuditModule:
+      type: string
+      description: >
+        A normalized, presentation-layer grouping derived server-side from
+        each audit_logs row's own `action` prefix (Phase 5, Prompt 12) —
+        never a stored column. `staff-auth` covers the staff_sign_in_success/
+        mfa_success/mfa_failure/sign_out events; `other` covers any action
+        that does not match a known module prefix (fails open to visibility,
+        never silently dropped).
+      enum: [leave, movement, emergency, health, device, staff-auth, other]
+
+    AuditActorType:
+      type: string
+      description: The audit_actor_type column's own real values — never invented.
+      enum: [student, parent, staff, system]
+
+    AuditEntityType:
+      type: string
+      description: >
+        Every distinct entity_type value any module currently writes,
+        confirmed by repository-wide search. trusted_devices and
+        device_registration_challenges rows have no hostel concept at all
+        and are therefore visible only to super_admin (see GET /audit's
+        description).
+      enum:
+        - leave_requests
+        - security_incidents
+        - health_cases
+        - staff
+        - trusted_devices
+        - device_registration_challenges
+
+    AuditListItem:
+      type: object
+      description: >
+        One audit_logs row, with hostel/student/actor identity resolved
+        server-side via a join back to the owning domain table — never a
+        second, duplicated audit store. metadata is passed through
+        unmodified from the authoritative row (never edited, never
+        enriched with anything the writer didn't record).
+      required:
+        - id
+        - occurredAt
+        - action
+        - module
+        - actorType
+        - actorId
+        - actorName
+        - actorRole
+        - entityType
+        - entityId
+        - studentId
+        - studentFullName
+        - studentRollNumber
+        - hostelId
+        - hostelName
+        - metadata
+      properties:
+        id: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        action: { type: string }
+        module: { $ref: "#/components/schemas/AuditModule" }
+        actorType: { $ref: "#/components/schemas/AuditActorType" }
+        actorId: { type: string, format: uuid, nullable: true }
+        actorName: { type: string, nullable: true }
+        actorRole: { type: string, nullable: true }
+        entityType: { type: string }
+        entityId: { type: string, format: uuid }
+        studentId: { type: string, format: uuid, nullable: true }
+        studentFullName: { type: string, nullable: true }
+        studentRollNumber: { type: string, nullable: true }
+        hostelId: { type: string, format: uuid, nullable: true }
+        hostelName: { type: string, nullable: true }
+        metadata:
+          type: object
+          additionalProperties: true
+
+    AuditList:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditListItem" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    AuditStatistics:
+      type: object
+      description: >
+        Server-derived, today-scoped event counts, grouped by module — every
+        field a fresh aggregate query over the caller's own authorized
+        scope, never a client-supplied or cached number.
+      required: [eventsToday, byModule]
+      properties:
+        eventsToday: { type: integer }
+        byModule:
+          type: object
+          required: [leave, movement, emergency, health, device, staff-auth, other]
+          properties:
+            leave: { type: integer }
+            movement: { type: integer }
+            emergency: { type: integer }
+            health: { type: integer }
+            device: { type: integer }
+            staff-auth: { type: integer }
+            other: { type: integer }
+
+    StaffAdminRole:
+      type: string
+      description: The real `staff_role` database enum values — never invented.
+      enum: [reception_warden, library_incharge, hostel_admin, super_admin]
+
+    StaffAdminStatus:
+      type: string
+      description: >
+        Phase 5, Prompt 13 — the minimal, safe lifecycle representation
+        `staff.status` actually supports. Enforcement is request-time, not
+        merely cosmetic (see `GET /staff`'s description).
+      enum: [active, suspended]
+
+    StaffAdmin:
+      type: object
+      description: >
+        One `staff` row, with `email` resolved via a join to
+        `auth.users` (the authoritative source for staff email — `staff`
+        itself has no email column).
+      required:
+        - id
+        - fullName
+        - email
+        - role
+        - hostelId
+        - hostelName
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        fullName: { type: string }
+        email: { type: string, nullable: true }
+        role: { $ref: "#/components/schemas/StaffAdminRole" }
+        hostelId: { type: string, format: uuid, nullable: true }
+        hostelName: { type: string, nullable: true }
+        status: { $ref: "#/components/schemas/StaffAdminStatus" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    StaffList:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StaffAdmin" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    StaffStatistics:
+      type: object
+      description: >
+        Server-derived counts — every field a fresh aggregate query, never
+        a client-supplied or cached number.
+      required: [totalStaff, activeStaff, suspendedStaff, byRole]
+      properties:
+        totalStaff: { type: integer }
+        activeStaff: { type: integer }
+        suspendedStaff: { type: integer }
+        byRole:
+          type: object
+          required: [reception_warden, library_incharge, hostel_admin, super_admin]
+          properties:
+            reception_warden: { type: integer }
+            library_incharge: { type: integer }
+            hostel_admin: { type: integer }
+            super_admin: { type: integer }
+
+    ConfigurationDomain:
+      type: string
+      description: >
+        Phase 5, Prompt 14 — the fixed, application-validated allow-list
+        (`configuration_entries.domain` is `text`, not a database enum;
+        `GET /configuration/domains` is this list's real runtime source).
+      enum: [hostel, approval, movement, emergency, health, notification, system, feature_flags]
+
+    ConfigurationScope:
+      type: string
+      enum: [global, hostel]
+
+    ConfigurationValueType:
+      type: string
+      description: Drives server-side value validation and the editor's type-aware input control.
+      enum: [string, number, boolean, json]
+
+    ConfigurationEntry:
+      type: object
+      description: >
+        One `configuration_entries` row. `value`'s JSON shape is validated
+        server-side against `valueType` on every write (`POST`/`PATCH`) —
+        never merely a client-side convention.
+      required:
+        - id
+        - domain
+        - key
+        - value
+        - valueType
+        - description
+        - scope
+        - hostelId
+        - hostelName
+        - isActive
+        - version
+        - createdBy
+        - createdByName
+        - updatedBy
+        - updatedByName
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        domain: { $ref: "#/components/schemas/ConfigurationDomain" }
+        key: { type: string }
+        value: {}
+        valueType: { $ref: "#/components/schemas/ConfigurationValueType" }
+        description: { type: string, nullable: true }
+        scope: { $ref: "#/components/schemas/ConfigurationScope" }
+        hostelId: { type: string, format: uuid, nullable: true }
+        hostelName: { type: string, nullable: true }
+        isActive: { type: boolean }
+        version:
+          type: integer
+          description: Optimistic-concurrency token — pass back as `expectedVersion` on `PATCH`.
+        createdBy: { type: string, format: uuid, nullable: true }
+        createdByName: { type: string, nullable: true }
+        updatedBy: { type: string, format: uuid, nullable: true }
+        updatedByName: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ConfigurationList:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ConfigurationEntry" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    ConfigurationStatistics:
+      type: object
+      description: Server-derived counts, within the caller's own hostel scope.
+      required: [totalEntries, activeEntries, inactiveEntries, byDomain]
+      properties:
+        totalEntries: { type: integer }
+        activeEntries: { type: integer }
+        inactiveEntries: { type: integer }
+        byDomain:
+          type: object
+          required:
+            [hostel, approval, movement, emergency, health, notification, system, feature_flags]
+          properties:
+            hostel: { type: integer }
+            approval: { type: integer }
+            movement: { type: integer }
+            emergency: { type: integer }
+            health: { type: integer }
+            notification: { type: integer }
+            system: { type: integer }
+            feature_flags: { type: integer }
+
+    ConfigurationValidationResult:
+      type: object
+      required: [valid]
+      description: >
+        `valid: true` iff `kind` was `"valid"`; `reason` is populated only
+        for the two outcomes that carry a human-readable explanation
+        (`invalid_value`/`invalid_key`) — the others are self-explanatory
+        from `kind` alone.
+      properties:
+        valid: { type: boolean }
+        kind:
+          type: string
+          enum:
+            [
+              valid,
+              invalid_hostel,
+              hostel_required_for_scope,
+              hostel_not_permitted_for_scope,
+              invalid_value,
+              invalid_key,
+            ]
+        reason: { type: string, nullable: true }
 
   responses:
     Unauthenticated:

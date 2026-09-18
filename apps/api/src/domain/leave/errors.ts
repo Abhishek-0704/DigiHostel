@@ -65,3 +65,30 @@ export class LeaveBiometricConfirmationError extends LeaveDomainError {
     super(message, "biometric_confirmation_required");
   }
 }
+
+/**
+ * Phase 3, Prompt 7C — Exit Authorization. The leave request exists and is
+ * within the caller's authorized scope (anti-enumeration: this is safe to
+ * distinguish from NotFound, same reasoning as LeaveRequestConflictError),
+ * but exit authorization cannot proceed: either the request is not
+ * `approved` yet (parent approval incomplete/absent, still escalating, or
+ * terminal in a non-approved way), or an exit authorization already exists
+ * for it (duplicate/replay — the UNIQUE(leave_request_id) constraint on
+ * `leave_exit_authorizations` is the actual database-enforced backstop this
+ * error surfaces after the fact, for a losing concurrent caller or an
+ * honest repeat click).
+ */
+export class ExitAuthorizationConflictError extends LeaveDomainError {
+  constructor(
+    readonly leaveRequestId: string,
+    readonly reason: "not_approved" | "already_authorized",
+    readonly currentStatus?: string,
+  ) {
+    super(
+      reason === "already_authorized"
+        ? "An exit authorization already exists for this leave request."
+        : `Leave request is in status "${currentStatus}" and is not eligible for exit authorization — parent approval must be complete ("approved") first.`,
+      "exit_authorization_conflict",
+    );
+  }
+}

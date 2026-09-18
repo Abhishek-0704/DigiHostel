@@ -1,0 +1,74 @@
+/* CSS custom-property mirror of tokens.ts — kept in sync by hand (see that
+   file's doc comment). Applied on :root so every component can reference
+   var(--color-primary) etc. without importing the TS module, and so a
+   future dark-mode toggle only needs to swap the color block. */
+
+:root {
+  --spacing-none: 0px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+
+  --radius-none: 0px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  --icon-sm: 16px;
+  --icon-md: 24px;
+  --icon-lg: 32px;
+
+  --motion-fast: 150ms;
+  --motion-normal: 250ms;
+  --motion-slow: 400ms;
+
+  --elevation-none: none;
+  --elevation-low: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --elevation-medium: 0 2px 6px rgba(0, 0, 0, 0.1);
+
+  --color-background: #fbfbfc;
+  --color-surface: #ffffff;
+  --color-surface-variant: #f1f2f5;
+  --color-primary: #2f5fdb;
+  --color-on-primary: #ffffff;
+  --color-secondary: #3f4b63;
+  --color-on-secondary: #ffffff;
+  --color-success: #1e8a5f;
+  --color-on-success: #ffffff;
+  --color-warning: #b4720a;
+  --color-on-warning: #ffffff;
+  --color-error: #c4392b;
+  --color-on-error: #ffffff;
+  --color-border: #e2e4ea;
+  --color-text-primary: #171a21;
+  --color-text-secondary: #5b6272;
+  --color-text-disabled: #9aa0ac;
+  --color-overlay: rgba(15, 17, 21, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: #101216;
+    --color-surface: #181b21;
+    --color-surface-variant: #20242c;
+    --color-primary: #7ea0f5;
+    --color-on-primary: #0a1330;
+    --color-secondary: #aeb8cc;
+    --color-on-secondary: #161a22;
+    --color-success: #5fc79a;
+    --color-on-success: #082c1d;
+    --color-warning: #e3a03f;
+    --color-on-warning: #3a2500;
+    --color-error: #e5786c;
+    --color-on-error: #3a0e08;
+    --color-border: #2a2e37;
+    --color-text-primary: #edeff3;
+    --color-text-secondary: #aeb4c2;
+    --color-text-disabled: #5b6272;
+    --color-overlay: rgba(0, 0, 0, 0.6);
+  }
+}

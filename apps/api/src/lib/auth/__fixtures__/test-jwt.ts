@@ -24,6 +24,14 @@ export interface SignTestJwtOptions {
   expiresInSeconds?: number; // default: 1 hour from now
   issuedAtSecondsAgo?: number; // for constructing already-expired tokens
   kid?: string;
+  /** Authenticator Assurance Level (Prompt 3, ADR-024) — omitted by default,
+   * matching every pre-existing test's real-world equivalent of a plain
+   * password-only Supabase session. Pass "aal2" to construct a
+   * fully-MFA-verified test token (guards.ts's requireAal2()). Shape
+   * confirmed empirically against a real local Supabase instance (a real
+   * TOTP enroll+verify round-trip) — see types.ts's SupabaseJwtClaims doc
+   * comment — not invented. */
+  aal?: string;
 }
 
 export async function signTestJwt(opts: SignTestJwtOptions): Promise<string> {
@@ -33,6 +41,7 @@ export async function signTestJwt(opts: SignTestJwtOptions): Promise<string> {
   return new SignJWT({
     role: "authenticated",
     email: `${opts.sub}@example.test`,
+    ...(opts.aal ? { aal: opts.aal } : {}),
   })
     .setProtectedHeader({ alg: "ES256", kid: opts.kid ?? "test-key" })
     .setSubject(opts.sub)

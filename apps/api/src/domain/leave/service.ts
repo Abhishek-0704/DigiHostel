@@ -1,17 +1,22 @@
 import type { BiometricFreshnessGate } from "../../lib/auth/security-gates.js";
 import type { LeaveRepository } from "./repository.js";
 import {
+  ExitAuthorizationConflictError,
   LeaveBiometricConfirmationError,
   LeaveRequestConflictError,
   LeaveRequestNotFoundError,
 } from "./errors.js";
 import type {
+  AuthorizeExitInput,
   BiometricAssertionInput,
   CreateLeaveRequestInput,
+  ExitAuthorizationView,
   LeaveApprovalEventView,
   LeaveDecision,
   LeaveRequestView,
   MarkExpiredInput,
+  StaffLeaveQueueInput,
+  StaffLeaveQueueItemView,
 } from "./types.js";
 
 /**
@@ -169,5 +174,83 @@ export class LeaveService {
   ): Promise<LeaveApprovalEventView[]> {
     await this.getForStudent(leaveRequestId, studentId);
     return this.repository.listEventsForLeaveRequest(leaveRequestId);
+  }
+
+  /** Staff-only queue read (Reception Dashboard, Phase 3 Prompt 7A) — a thin
+   * passthrough today, kept as its own service method (rather than calling
+   * the repository directly from the route) so a future authorization
+   * refinement has somewhere to live without moving the route/repository
+   * boundary. */
+  async getQueueForStaff(input: StaffLeaveQueueInput): Promise<StaffLeaveQueueItemView[]> {
+    return this.repository.listForStaffQueue(input);
+  }
+
+  /** Approval-Event Timeline for the Parent Approval Session Workspace
+   * (Phase 3 Prompt 7B). Reuses the exact same anti-enumeration shape as
+   * getEventsForParent/getEventsForStudent: a caller who cannot access the
+   * leave request itself (wrong hostel, or it doesn't exist) cannot access
+   * its event log either — the accessibility check throws before the event
+   * read ever runs. */
+  async getEventsForStaff(
+    leaveRequestId: string,
+    input: StaffLeaveQueueInput,
+  ): Promise<LeaveApprovalEventView[]> {
+    const accessible = await this.repository.findAccessibleLeaveRequestForStaff(
+      leaveRequestId,
+      input,
+    );
+    if (!accessible) {
+      throw new LeaveRequestNotFoundError(leaveRequestId);
+    }
+    return this.repository.listEventsForLeaveRequest(leaveRequestId);
+  }
+
+  /** Reception-Initiated Parent Approval — the one and only server-
+   * authoritative way a leave request leaves `pending` and enters the
+   * parent-decidable/escalation lifecycle. Same not_found/conflict mapping
+   * as markExpired(): "doesn't exist," "wrong hostel," and "not currently
+   * pending" (including a losing concurrent call, or a second click after
+   * approval already started) are all indistinguishable to the caller
+   * beyond the 404/409 split every other staff transition already uses —
+   * no new error shape was introduced for this action. */
+  async startParentApproval(input: {
+    leaveRequestId: string;
+    actingStaffId: string;
+    actingStaffRole: "reception_warden" | "hostel_admin" | "super_admin";
+  }): Promise<LeaveRequestView> {
+    const outcome = await this.repository.startParentApproval(input);
+
+    switch (outcome.kind) {
+      case "success":
+        return outcome.leaveRequest;
+      case "not_found":
+        throw new LeaveRequestNotFoundError(input.leaveRequestId);
+      case "conflict":
+        throw new LeaveRequestConflictError(input.leaveRequestId, outcome.currentStatus);
+    }
+  }
+
+  /** Phase 3, Prompt 7C — Student Verification & Exit Authorization. Same
+   * not_found/conflict error-mapping discipline as every other staff
+   * transition in this service; the one addition is the two distinct
+   * conflict reasons `authorizeExit()`'s outcome carries (see
+   * ExitAuthorizationOutcome's own doc comment). */
+  async authorizeExit(input: AuthorizeExitInput): Promise<ExitAuthorizationView> {
+    const outcome = await this.repository.authorizeExit(input);
+
+    switch (outcome.kind) {
+      case "success":
+        return outcome.exitAuthorization;
+      case "not_found":
+        throw new LeaveRequestNotFoundError(input.leaveRequestId);
+      case "conflict":
+        throw outcome.reason === "already_authorized"
+          ? new ExitAuthorizationConflictError(input.leaveRequestId, "already_authorized")
+          : new ExitAuthorizationConflictError(
+              input.leaveRequestId,
+              "not_approved",
+              outcome.currentStatus,
+            );
+    }
   }
 }

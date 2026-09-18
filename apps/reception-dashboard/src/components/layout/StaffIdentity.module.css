@@ -1,0 +1,33 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  line-height: 1.2;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.scope {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+/* Below this width, ProfileMenu's own trigger (always rendered) remains
+   the sole identity entry point — the full name/role/scope block is
+   dropped rather than wrapping awkwardly in a 56px-tall header. */
+@media (max-width: 640px) {
+  .wrapper {
+    display: none;
+  }
+}

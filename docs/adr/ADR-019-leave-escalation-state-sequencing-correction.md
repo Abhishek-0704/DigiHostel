@@ -96,3 +96,7 @@ All detailed above under "Alternatives Considered."
 ## Supersedes / Superseded by
 
 **Supersedes ADR-017 §9's transition-sequencing claims only** (the `guardian_notified`→`manual_verification` direct-transition statement, and the unevidenced "absolute lifecycle bound" claim for `expired`) and the one restating sentence in ADR-017's "pg-boss Job Design" section. Does **not** supersede ADR-017 §1–§8, nor §9's separate, still-valid claim that `manual_verification` requires explicit staff action and is not auto-expiring on a per-stage timer. Not superseded by anything.
+
+## Implementation Note (Reception-Initiated Parent Approval correction, added 2026-09-15/16)
+
+This ADR corrects the stage-sequencing chain once escalation is underway — it says nothing about what triggers the first stage. That trigger point (previously: automatically at student leave-request creation) was separately corrected to an explicit Reception action; see [ADR-017](ADR-017-leave-escalation-orchestration-model.md)'s own Implementation Note and `docs/current-state.md`'s "Reception-Initiated Parent Approval correction" entry for the full account. This ADR's corrected `father_notified → mother_notified → guardian_notified → in_app_call → manual_verification` sequencing is unchanged and applies identically once escalation is started, however it is started. No contradiction of this ADR's Decision/Context/Consequences exists, so no further supersession was required. Added per `docs/adr/README.md`'s explicit allowance for "adding implementation references" to an accepted ADR.

@@ -1,0 +1,16 @@
+-- Phase 4, Prompt 8 — Student Operations Center.
+--
+-- The new staff-facing student search endpoint (apps/api/src/routes/
+-- students.ts) filters the caller's own hostel-scoped rows by a
+-- case-insensitive PREFIX match on full_name (`lower(full_name) LIKE
+-- lower($1) || '%'`). students.roll_number already has a unique btree
+-- index (0000_cute_korvac.sql) that supports an efficient prefix match with
+-- no further change; full_name had no index of any kind. A plain index on
+-- the raw column would not help a case-insensitive comparison (Postgres
+-- cannot use a btree on `full_name` for a query that wraps it in `lower()`)
+-- -- indexing `lower(full_name)` directly is the smallest index that
+-- actually matches the real query shape. No RLS policy, grant, or table
+-- structure changes; existing SELECT policies (students_select_own_
+-- hostel_reception/students_all_hostel_admin/students_all_super_admin,
+-- packages/db/src/schema/identity.ts) are unaffected.
+CREATE INDEX "students_full_name_lower_idx" ON "students" USING btree (lower("full_name"));

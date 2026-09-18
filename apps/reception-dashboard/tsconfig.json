@@ -1,0 +1,32 @@
+{
+  // Deliberately does NOT extend the root tsconfig.base.json: that base is
+  // written for the Node-runtime packages (apps/api, packages/*) and sets
+  // moduleResolution: "NodeNext", which is wrong for a Vite-bundled browser
+  // app (no extension-required imports, no CommonJS/ESM interop concerns
+  // Vite's own bundler already resolves). apps/parent-mobile establishes
+  // the existing precedent for this: it extends "expo/tsconfig.base"
+  // instead of the root base for the same reason — each app extends the
+  // config appropriate to its own runtime/bundler, not one shared base that
+  // doesn't fit either of them.
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src", "vite.config.ts"]
+}

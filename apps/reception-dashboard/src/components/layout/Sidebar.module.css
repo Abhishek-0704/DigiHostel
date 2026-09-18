@@ -1,0 +1,62 @@
+.sidebar,
+.collapsed {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  height: 100%;
+  transition: width var(--motion-normal) ease;
+}
+
+.sidebar {
+  width: 220px;
+}
+
+.collapsed {
+  width: 64px;
+}
+
+.scrollArea {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-sm);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.footerGroup {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.collapseArea {
+  padding: var(--spacing-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Tablet: the sidebar remains usable but slightly narrower; the operator is
+   expected to collapse it manually via SidebarCollapseButton when they want
+   more content width — matching §21's "Tablet: allow sidebar collapse" (a
+   choice the operator makes, not an automatic override). Deliberately does
+   NOT force icon-only width here: doing so via CSS alone while the
+   collapsed prop passed to NavItem stays JS-driven would desync the
+   container's width from whether each NavItem is actually rendering in
+   its collapsed (icon-only) layout — a real visual bug, not a
+   simplification. Below 640px, an expanded sidebar's 220px does reduce the
+   content area's available width on a genuinely small viewport; this is
+   the accepted, documented "mobile is secondary" trade-off (§21) rather
+   than an automatic collapse this pass deliberately doesn't implement — see
+   docs/dashboard-shell.md. */
+@media (max-width: 1024px) {
+  .sidebar {
+    width: 200px;
+  }
+}

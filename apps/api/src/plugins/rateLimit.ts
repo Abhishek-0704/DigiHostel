@@ -7,6 +7,14 @@ import {
   RATE_LIMIT_EXPIRE,
   RATE_LIMIT_OTP_REQUEST,
   RATE_LIMIT_OTP_VERIFY,
+  RATE_LIMIT_DEVICE_CHALLENGE,
+  RATE_LIMIT_DEVICE_REGISTER,
+  RATE_LIMIT_STAFF_AUTH_AUDIT,
+  RATE_LIMIT_STAFF_QUEUE,
+  RATE_LIMIT_START_PARENT_APPROVAL,
+  RATE_LIMIT_EXIT_AUTHORIZATION,
+  RATE_LIMIT_STAFF_ADMIN,
+  RATE_LIMIT_CONFIGURATION_ADMIN,
   type RateLimitTier,
 } from "../config/rateLimit.js";
 
@@ -17,6 +25,14 @@ export interface RateLimitTiers {
   expire: RateLimitTier;
   otpRequest: RateLimitTier;
   otpVerify: RateLimitTier;
+  deviceChallenge: RateLimitTier;
+  deviceRegister: RateLimitTier;
+  staffAuthAudit: RateLimitTier;
+  staffQueue: RateLimitTier;
+  startParentApproval: RateLimitTier;
+  exitAuthorization: RateLimitTier;
+  staffAdmin: RateLimitTier;
+  configurationAdmin: RateLimitTier;
 }
 
 export interface RegisterRateLimitOverrides {
@@ -66,6 +82,14 @@ export async function registerRateLimit(
     expire: overrides.tiers?.expire ?? RATE_LIMIT_EXPIRE,
     otpRequest: overrides.tiers?.otpRequest ?? RATE_LIMIT_OTP_REQUEST,
     otpVerify: overrides.tiers?.otpVerify ?? RATE_LIMIT_OTP_VERIFY,
+    deviceChallenge: overrides.tiers?.deviceChallenge ?? RATE_LIMIT_DEVICE_CHALLENGE,
+    deviceRegister: overrides.tiers?.deviceRegister ?? RATE_LIMIT_DEVICE_REGISTER,
+    staffAuthAudit: overrides.tiers?.staffAuthAudit ?? RATE_LIMIT_STAFF_AUTH_AUDIT,
+    staffQueue: overrides.tiers?.staffQueue ?? RATE_LIMIT_STAFF_QUEUE,
+    startParentApproval: overrides.tiers?.startParentApproval ?? RATE_LIMIT_START_PARENT_APPROVAL,
+    exitAuthorization: overrides.tiers?.exitAuthorization ?? RATE_LIMIT_EXIT_AUTHORIZATION,
+    staffAdmin: overrides.tiers?.staffAdmin ?? RATE_LIMIT_STAFF_ADMIN,
+    configurationAdmin: overrides.tiers?.configurationAdmin ?? RATE_LIMIT_CONFIGURATION_ADMIN,
   };
 
   await app.register(rateLimit, {

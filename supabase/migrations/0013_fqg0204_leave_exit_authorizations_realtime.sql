@@ -1,0 +1,40 @@
+-- F-QG02-04 remediation (QG-02 Leave Authorization Workflow Review,
+-- classified MINOR, deliberately left open during the F-QG02-01 CRITICAL
+-- remediation pass).
+--
+-- Prior state: leave_exit_authorizations (supabase/migrations/
+-- 0011_exit_authorization.sql) was never added to the supabase_realtime
+-- publication -- only leave_requests/notifications (0002_realtime_
+-- publication.sql) and leave_approval_events (0007_f08_leave_approval_
+-- events_realtime.sql) were members. In practice this was masked by an
+-- incidental coupling identical in shape to the one F-08 already diagnosed
+-- and fixed for leave_approval_events itself: DrizzleLeaveRepository.
+-- authorizeExit() (apps/api/src/domain/leave/repository.ts) always inserts
+-- one leave_approval_events row (event_type='manual_override') in the SAME
+-- transaction as the leave_exit_authorizations insert, so a client already
+-- subscribed to leave_approval_events (apps/reception-dashboard/src/hooks/
+-- useLeaveApprovalEventsRealtime.ts, used by StudentVerificationPage.tsx)
+-- already receives a live signal and refetches when an exit authorization
+-- is recorded -- but the authoritative fact itself (leave_exit_
+-- authorizations) had no direct realtime signal of its own, matching F-08's
+-- own "event-only gap" pattern: any future code path that writes to this
+-- table without also writing a coupled leave_approval_events row in the
+-- same transaction would be invisible to a live-connected client.
+--
+-- Fix: leave_exit_authorizations joins the publication directly, the same
+-- one-line fix F-08 already established for leave_approval_events. RLS
+-- (already enabled and policy-covered -- packages/db/src/schema/leave.ts's
+-- lxa_select_own_student/lxa_select_linked_parent/lxa_select_reception/
+-- lxa_select_hostel_admin/lxa_select_super_admin policies, and the
+-- workflow-state-gated lxa_insert_staff/lxa_insert_super_admin policies
+-- corrected by 0012_fqg0201_exit_authorization_workflow_state_gate.sql)
+-- continues to scope exactly which rows each authenticated client's
+-- subscription receives -- this statement only makes the table eligible
+-- for logical replication in the first place, per ADR-009. No RLS policy,
+-- grant, or table structure is added, changed, or weakened; no new
+-- authorization model is introduced; the database remains authoritative.
+--
+-- Not a Drizzle-tracked schema change, hand-written per the same
+-- established precedent as 0002_realtime_publication.sql/0007_f08_leave_
+-- approval_events_realtime.sql.
+alter publication supabase_realtime add table leave_exit_authorizations;

@@ -1,0 +1,55 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.explanation {
+  margin: 0 0 var(--spacing-md);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.codeInput {
+  height: 44px;
+  width: 100%;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 20px;
+  letter-spacing: 0.4em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.codeInput:disabled {
+  background: var(--color-surface-variant);
+  color: var(--color-text-disabled);
+}
+
+.codeInput.invalid {
+  border-color: var(--color-error);
+}
+
+.formError {
+  margin: 0 0 var(--spacing-md);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.retryRow {
+  display: flex;
+  justify-content: center;
+}

@@ -9,6 +9,7 @@ import {
   isReception,
   isLibraryIncharge,
   isSuperAdmin,
+  isReceptionForLibraryPass,
 } from "./rls-helpers.js";
 
 // docs/database-schema-design.md — Library Domain
@@ -92,11 +93,28 @@ export const qrSessions = pgTable(
       to: authenticatedRole,
       using: sql`exists (select 1 from ${libraryPasses} lp where lp.id = ${t.libraryPassId} and lp.student_id = ${callerStudentId})`,
     }),
-    pgPolicy("qr_sessions_all_reception_library", {
+    // QG-03 remediation, F-QG03-02 (MAJOR — dormant, not yet application-
+    // exploitable since no Fastify route reads/writes this table today, but
+    // an unsafe pre-provisioned boundary for whoever activates Library
+    // Operations). Previously ONE policy combining `isReception or
+    // isLibraryIncharge` with no hostel join for either — unlike
+    // `library_passes_all_reception` (this same file, correctly scoped)
+    // which this table's own reception access should have matched from the
+    // start. Split: reception is now scoped via `isReceptionForLibraryPass`
+    // (join through library_passes -> students -> hostel_id); library_incharge
+    // remains intentionally GLOBAL (unchanged — same established precedent
+    // as every other library_incharge grant in this schema).
+    pgPolicy("qr_sessions_all_reception", {
       for: "all",
       to: authenticatedRole,
-      using: sql`${isReception} or ${isLibraryIncharge}`,
-      withCheck: sql`${isReception} or ${isLibraryIncharge}`,
+      using: isReceptionForLibraryPass(t.libraryPassId),
+      withCheck: isReceptionForLibraryPass(t.libraryPassId),
+    }),
+    pgPolicy("qr_sessions_all_library_incharge", {
+      for: "all",
+      to: authenticatedRole,
+      using: isLibraryIncharge,
+      withCheck: isLibraryIncharge,
     }),
     pgPolicy("qr_sessions_all_super_admin", {
       for: "all",
@@ -138,19 +156,39 @@ export const journeyEvents = pgTable(
       to: authenticatedRole,
       using: sql`exists (select 1 from ${libraryPasses} lp join ${parentStudentRelationships} psr on psr.student_id = lp.student_id where lp.id = ${t.libraryPassId} and psr.parent_id = ${callerParentId})`,
     }),
-    pgPolicy("journey_events_insert_reception_library", {
+    // QG-03 remediation, F-QG03-02 — same reasoning/precedent as
+    // qr_sessions above. Split into a reception policy (scoped via
+    // `isReceptionForLibraryPass`) and a library_incharge policy
+    // (unchanged, global). The `verifiedByStaffId`/`biometricConfirmed`
+    // forged-actor/forged-attestation checks are preserved unmodified on
+    // both.
+    pgPolicy("journey_events_insert_reception", {
       for: "insert",
       to: authenticatedRole,
       withCheck: sql`
-        (${isReception} or ${isLibraryIncharge})
+        ${isReceptionForLibraryPass(t.libraryPassId)}
         and ${t.verifiedByStaffId} = public.current_staff_id()
         and ${t.biometricConfirmed} = true
       `,
     }),
-    pgPolicy("journey_events_select_reception_library", {
+    pgPolicy("journey_events_insert_library_incharge", {
+      for: "insert",
+      to: authenticatedRole,
+      withCheck: sql`
+        ${isLibraryIncharge}
+        and ${t.verifiedByStaffId} = public.current_staff_id()
+        and ${t.biometricConfirmed} = true
+      `,
+    }),
+    pgPolicy("journey_events_select_reception", {
       for: "select",
       to: authenticatedRole,
-      using: sql`${isReception} or ${isLibraryIncharge}`,
+      using: isReceptionForLibraryPass(t.libraryPassId),
+    }),
+    pgPolicy("journey_events_select_library_incharge", {
+      for: "select",
+      to: authenticatedRole,
+      using: isLibraryIncharge,
     }),
     pgPolicy("journey_events_all_super_admin", {
       for: "all",

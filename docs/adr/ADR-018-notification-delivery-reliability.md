@@ -100,3 +100,7 @@ All detailed above under "Alternatives Considered."
 ## Supersedes / Superseded by
 
 None — refines and completes this ADR's own previously-`PROPOSED` content before acceptance (explicitly permitted); does not supersede ADR-017 (whose state-mutation content is unchanged) or any other ADR.
+
+## Implementation Note (Reception-Initiated Parent Approval correction, added 2026-09-15/16)
+
+This ADR governs notification delivery/retry/idempotency mechanics once a notification job is enqueued — it does not decide when the first one is enqueued. That trigger point (previously: automatically at student leave-request creation) was corrected to an explicit Reception action (`POST /leave-requests/{id}/send-for-parent-approval`) for reasons unrelated to this ADR's own concerns — see [ADR-017](ADR-017-leave-escalation-orchestration-model.md)'s own Implementation Note and `docs/current-state.md`'s "Reception-Initiated Parent Approval correction" entry for the full account. This ADR's retry policy, idempotency mechanism, and delivery-outcome handling are unchanged and apply identically to every notification job scheduled after this correction. No contradiction of this ADR's Decision/Context/Consequences exists, so no supersession was required. Added per `docs/adr/README.md`'s explicit allowance for "adding implementation references" to an accepted ADR.

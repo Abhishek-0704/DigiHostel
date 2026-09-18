@@ -1,0 +1,17 @@
+.sm {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  flex-shrink: 0;
+}
+
+.md {
+  width: var(--icon-md);
+  height: var(--icon-md);
+  flex-shrink: 0;
+}
+
+.lg {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+  flex-shrink: 0;
+}

@@ -10,7 +10,10 @@
     "ios": {
       "supportsTablet": false
     },
-    "android": {},
+    "android": {
+      "package": "com.digihostel.parent",
+      "permissions": ["android.permission.USE_BIOMETRIC", "android.permission.USE_FINGERPRINT"]
+    },
     "plugins": [
       "expo-router",
       "expo-secure-store",
@@ -24,6 +27,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "409bb445-42cb-4318-8fbb-d7842107f94e"
+      }
+    },
+    "owner": "abhishek7747"
   }
 }

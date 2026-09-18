@@ -9,9 +9,11 @@ DigiHostel/
 ├── apps/
 │   ├── api/                  Fastify backend (ADR-005) — the single backend serving all clients
 │   ├── student-mobile/       Student mobile app, Expo/React Native (ADR-001, ADR-004)
-│   └── parent-mobile/        Parent+Guardian mobile app, Expo/React Native (ADR-001, ADR-004)
-│   [reception-dashboard/ — PLANNED, not yet scaffolded: web framework choice deliberately
-│    deferred, no dedicated ADR yet covers it; see docs/target-architecture.md]
+│   ├── parent-mobile/        Parent+Guardian mobile app, Expo/React Native (ADR-001, ADR-004)
+│   └── reception-dashboard/  Reception Warden/Hostel Admin/Super Admin web dashboard,
+│                             Vite+React+TS SPA (ADR-001, ADR-023) — scaffolding only as of
+│                             Prompt 0.2, no business workflow implemented yet; see
+│                             apps/reception-dashboard/docs/architecture.md
 │
 ├── packages/
 │   ├── api-spec/              OpenAPI source contract + Orval config (ADR-007)
@@ -57,5 +59,4 @@ DigiHostel/
 
 ## Deferred/Not Yet Justified
 
-- `apps/reception-dashboard` — web framework choice not yet decided (no ADR covers it); will be added when that decision is made, following the same ADR process as ADR-004/005.
 - `packages/config` (shared lint/tsconfig presets as their own package) — not created yet; root-level `tsconfig.base.json` is sufficient at current package count. Revisit if config duplication across packages becomes a real maintenance burden.

@@ -1,0 +1,41 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  min-width: 360px;
+}
+
+.note {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.input {
+  width: 100%;
+  padding: 6px var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 13px;
+}
+
+.error {
+  font-size: 13px;
+  color: var(--color-error, #c0392b);
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}

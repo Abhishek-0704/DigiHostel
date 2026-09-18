@@ -4,6 +4,7 @@ import { FakeAuthDbPort } from "../lib/auth/__fixtures__/fake-db-port.js";
 import { generateTestKeyPair, signTestJwt } from "../lib/auth/__fixtures__/test-jwt.js";
 import { createJwtVerifier } from "../lib/auth/jwt.js";
 import { FakeOtpSender } from "../domain/auth/__fixtures__/fake-otp-sender.js";
+import { FakeStaffRepository } from "../domain/staff/__fixtures__/fake-repository.js";
 import type { KeyLike } from "jose";
 
 // End-to-end through the real Fastify app (app.ts + plugins/auth.ts +
@@ -38,6 +39,7 @@ describe("test-auth routes (end-to-end through the real app)", () => {
     return buildApp({
       authOverrides: { jwtVerifier, authDbPort: db },
       otpAuthOverrides: { otpSender: new FakeOtpSender() },
+      staffOverrides: { staffRepository: new FakeStaffRepository() },
     });
   }
 

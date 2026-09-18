@@ -4,6 +4,7 @@ import {
   requireStudent,
   requireParentOrGuardian,
   requireStaffRole,
+  requireAal2,
   requireLinkedToStudent,
   requireActiveTrustedDevice,
 } from "./guards.js";
@@ -133,6 +134,69 @@ describe("role guards", () => {
     await guard(request, reply);
 
     expect(state.statusCode).toBeNull();
+  });
+});
+
+// Prompt 3 (RBAC & Authorization Framework) — closes the Prompt 0.3 ASRB
+// CRITICAL finding: apps/api previously had zero AAL/AMR awareness anywhere,
+// so a password-only (aal1) session with an otherwise-valid JWT could call a
+// staff route directly. The `aal`/`aal2` shape asserted below was confirmed
+// empirically against a real local Supabase instance (a genuine TOTP
+// enroll+verify round-trip) — see types.ts's SupabaseJwtClaims doc comment.
+describe("requireAal2", () => {
+  const staffProfile: AuthContext["profile"] = {
+    kind: "staff",
+    id: "staff-1",
+    role: "reception_warden",
+    hostelId: "hostel-1",
+  };
+
+  function requestWithAal(aal: string | undefined) {
+    return createMockRequest({
+      userId: "user-1",
+      claims: { ...CLAIMS, ...(aal ? { aal } : {}) },
+      profile: staffProfile,
+    });
+  }
+
+  it("missing aal claim (never completed any Supabase Auth session) -> 403 insufficient_assurance, fails closed", async () => {
+    const guard = requireAal2();
+    const request = requestWithAal(undefined);
+    const { reply, state } = createMockReply();
+
+    await guard(request, reply);
+
+    expect(state.statusCode).toBe(403);
+    expect((state.body as { error: { code: string } }).error.code).toBe("insufficient_assurance");
+  });
+
+  it("aal1 (password-only, MFA not completed) -> 403 insufficient_assurance", async () => {
+    const guard = requireAal2();
+    const request = requestWithAal("aal1");
+    const { reply, state } = createMockReply();
+
+    await guard(request, reply);
+
+    expect(state.statusCode).toBe(403);
+    expect((state.body as { error: { code: string } }).error.code).toBe("insufficient_assurance");
+  });
+
+  it("aal2 (MFA-verified session) -> not rejected", async () => {
+    const guard = requireAal2();
+    const request = requestWithAal("aal2");
+    const { reply, state } = createMockReply();
+
+    await guard(request, reply);
+
+    expect(state.statusCode).toBeNull();
+  });
+
+  it("used without authenticate() running first -> throws rather than silently allowing/denying", async () => {
+    const guard = requireAal2();
+    const request = createMockRequest(undefined, "Bearer whatever");
+    const { reply } = createMockReply();
+
+    await expect(guard(request, reply)).rejects.toThrow(/authenticate\(\) running first/);
   });
 });
 

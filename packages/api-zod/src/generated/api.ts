@@ -68,6 +68,60 @@ export const verifyOtpResponse = zod.object({
 
 
 /**
+ * Staff password sign-in and native TOTP MFA happen via direct browser-to-Supabase-Auth calls (ADR-024) — this backend never observes them as they happen. This endpoint lets the already- authenticated caller report that one occurred, so it lands in DigiHostel's own audit_logs trail (not just Supabase's internal auth.audit_log_entries, which already captures the raw attempt regardless of this endpoint). Only events a caller can report while still holding a valid bearer token are supported here — sign-in-failure and session-expiry events have no valid token to authenticate the report with, and are covered by Supabase's own auth.audit_log_entries instead (see apps/reception-dashboard/docs/authorization.md).
+
+ * @summary Record a staff authentication event in the audit trail (Reception Dashboard Prompt 1 — Authentication Infrastructure)
+
+ */
+export const recordStaffAuthEventBody = zod.object({
+  "event": zod.enum(['sign_in_success', 'mfa_success', 'mfa_failure', 'sign_out'])
+}).describe('Only events reportable while still holding a valid bearer token — see POST \/auth\/staff\/audit-events\'s own description.\n')
+
+
+/**
+ * Server-controlled first step of trusted-device registration: issues a single-use, short-lived, cryptographically random nonce bound to the caller's own parent identity. The client passes this nonce into the platform attestation call (Play Integrity on Android) and submits the resulting token to POST /devices/register — the client is never the authority for the challenge value itself.
+
+ * @summary Request a device-registration challenge (ADR-003 implementation)
+
+ */
+export const requestDeviceChallengeBody = zod.object({
+  "platform": zod.enum(['android', 'ios']).describe('Mirrors packages\/db\/src\/schema\/enums.ts\'s device_platform enum.')
+})
+
+export const requestDeviceChallengeResponse = zod.object({
+  "challengeId": zod.string().uuid(),
+  "nonce": zod.string().describe('Pass this exact value into the platform attestation call (e.g. Play Integrity\'s requestHash\/nonce parameter) so the resulting token is cryptographically bound to this specific challenge.\n'),
+  "expiresAt": zod.string().datetime({})
+})
+
+
+/**
+ * Redeems a previously-issued, single-use challenge and verifies the submitted attestation token server-side (Google Play Integrity Standard API on Android) before ever creating a trusted_devices row. The client can never self-declare trust — every outcome other than a genuine, server-verified PASS leaves the device untrusted.
+
+ * @summary Submit platform attestation to complete device registration (ADR-003 implementation)
+
+ */
+
+
+
+
+export const registerDeviceBody = zod.object({
+  "challengeId": zod.string().uuid(),
+  "platform": zod.enum(['android', 'ios']).describe('Mirrors packages\/db\/src\/schema\/enums.ts\'s device_platform enum.'),
+  "attestationToken": zod.string().min(1).describe('The opaque token the platform attestation API produced (a Play Integrity integrity token on Android) — never inspected or decoded by the client, only relayed to the backend.\n'),
+  "deviceFingerprint": zod.string().min(1).describe('This installation\'s own random, app-generated identifier (services\/deviceIdentity — never a hardware serial\/IMEI\/Android ID), used only to recognize the same installation on a future listTrustedDevices() call, never as attestation proof itself.\n')
+})
+
+export const registerDeviceResponse = zod.object({
+  "id": zod.string().uuid(),
+  "platform": zod.enum(['android', 'ios']).describe('Mirrors packages\/db\/src\/schema\/enums.ts\'s device_platform enum.'),
+  "registeredAt": zod.string().datetime({})
+})
+
+
+/**
+ * Creates the request in its initial `pending` state only — this does NOT notify a parent/guardian, and does NOT schedule any escalation job (Reception-Initiated Parent Approval correction). Parent involvement begins only once an authorized staff member explicitly calls `POST /leave-requests/{leaveRequestId}/send-for-parent-approval`.
+
  * @summary Create a leave request (authenticated student, for themselves only)
  */
 export const createLeaveRequestBodyReasonMax = 1000;
@@ -101,6 +155,31 @@ export const listLeaveRequestsResponse = zod.array(listLeaveRequestsResponseItem
 
 
 /**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant on leave_requests and receives 403, matching POST /leave-requests/{leaveRequestId}/expire's existing role set. reception_warden and hostel_admin see only leave requests belonging to students in their own assigned hostel, resolved entirely server-side from the authenticated caller's own staff row — never a client-supplied filter; super_admin sees every hostel's requests. Ordered newest-created first, with the leave request id as a stable secondary sort key so realtime updates never reorder unrelated rows. Each item is enriched with the minimum student/hostel/room context the queue table needs (roll number, full name, hostel name, room number) via existing, already-authorized joins — never any parent identity, contact detail, or SAP/mentor-approval data, neither of which this endpoint has any access to.
+
+ * @summary Staff-only: the Reception Dashboard's operational leave-request queue (Phase 3, Prompt 7A)
+
+ */
+export const listStaffLeaveQueueResponseItem = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentRollNumber": zod.string(),
+  "studentFullName": zod.string(),
+  "studentHostelId": zod.string().uuid().nullable(),
+  "studentHostelName": zod.string().nullable(),
+  "studentRoomId": zod.string().uuid().nullable(),
+  "studentRoomNumber": zod.string().nullable(),
+  "reason": zod.string(),
+  "startDate": zod.string().date(),
+  "endDate": zod.string().date(),
+  "status": zod.enum(['pending', 'father_notified', 'mother_notified', 'guardian_notified', 'approved', 'rejected', 'in_app_call', 'manual_verification', 'expired']).describe('Full state vocabulary already defined by the schema (packages\/db\/src\/schema\/enums.ts, leave_request_status) — this endpoint set only ever produces approved\/rejected transitions today; the escalation-notification states are included because they are part of the same enum, not because this task creates them.\n'),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('A leave_requests row enriched with the minimum student\/hostel\/room context the Reception Dashboard\'s queue table needs — never a parent identity or contact detail (staff have no legitimate reason to see that here, docs\/rls-policy-matrix.md), and never any KIIT SAP\/mentor- approval field (no such data source is wired to this endpoint — see apps\/reception-dashboard\/docs\/leave-queue.md).\n')
+export const listStaffLeaveQueueResponse = zod.array(listStaffLeaveQueueResponseItem)
+
+
+/**
  * @summary Get a leave request — authenticated owning student, or authenticated parent/guardian (relationship-checked)
 
  */
@@ -121,7 +200,7 @@ export const getLeaveRequestResponse = zod.object({
 
 
 /**
- * @summary Get a leave request's immutable approval-event timeline (Approval History) — authenticated owning student, or authenticated parent/guardian (relationship-checked). Same authorization/anti- enumeration shape as GET /leave-requests/{leaveRequestId}.
+ * @summary Get a leave request's immutable approval-event timeline (Approval History / Parent Approval Session Workspace) — authenticated owning student, authenticated parent/guardian (relationship-checked), or authenticated staff (reception_warden/hostel_admin/super_admin, AAL2-required, hostel-scoped). Same authorization/anti-enumeration shape as GET /leave-requests/{leaveRequestId} for student/parent; staff access mirrors GET /leave-requests/queue's hostel-scoping (Phase 3 Prompt 7B).
 
  */
 export const listLeaveRequestEventsParams = zod.object({
@@ -191,6 +270,28 @@ export const rejectLeaveRequestResponse = zod.object({
 
 
 /**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant on leave_requests and receives 403, matching every other staff-only leave-request transition. reception_warden/ hostel_admin are hostel-scoped to the leave request's own student; super_admin is unscoped. Conditionally transitions `pending` to the first real escalation stage — never any other current status, including a second concurrent call for the same leave request (the underlying conditional database UPDATE is what makes "exactly one caller can ever succeed" a server-enforced invariant, not a frontend one): a losing concurrent call, or any call against a request that is not currently `pending`, receives 409 Conflict.
+
+ * @summary Staff-only: explicitly transition a leave request from `pending` into the parent approval/escalation lifecycle (Reception-Initiated Parent Approval correction). Never automatic — creating a leave request (`POST /leave-requests`) no longer schedules this on its own; a Reception Warden/Hostel Admin/Super Admin must call this endpoint explicitly before any parent notification is dispatched.
+
+ */
+export const startParentApprovalParams = zod.object({
+  "leaveRequestId": zod.string().uuid()
+})
+
+export const startParentApprovalResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "reason": zod.string(),
+  "startDate": zod.string().date(),
+  "endDate": zod.string().date(),
+  "status": zod.enum(['pending', 'father_notified', 'mother_notified', 'guardian_notified', 'approved', 'rejected', 'in_app_call', 'manual_verification', 'expired']).describe('Full state vocabulary already defined by the schema (packages\/db\/src\/schema\/enums.ts, leave_request_status) — this endpoint set only ever produces approved\/rejected transitions today; the escalation-notification states are included because they are part of the same enum, not because this task creates them.\n'),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+})
+
+
+/**
  * @summary Staff-only: explicitly mark a leave request expired from manual_verification (ADR-019 §2). Never automatic — no scheduled job may perform this transition.
 
  */
@@ -208,3 +309,1337 @@ export const expireLeaveRequestResponse = zod.object({
   "createdAt": zod.string().datetime({}),
   "updatedAt": zod.string().datetime({})
 })
+
+
+/**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant and receives 403, matching every other staff-only leave-request transition. reception_warden/hostel_admin are hostel-scoped to the leave request's own student; super_admin is unscoped. Requires the leave request to currently be `approved` (parent approval genuinely complete) and an explicit `identityConfirmed: true` body field — a staff attestation that the person at reception has been visually confirmed to match the student's identity; this cannot be independently re-verified by the server and is never defaulted or inferred. KIIT SAP mentor approval is NOT checked by this endpoint: no SAP integration exists anywhere in this system, so this endpoint never claims to have verified it — see apps/reception-dashboard/docs/exit-authorization.md. At most one exit authorization may ever exist per leave request — a second call (double-click, retry, or a losing concurrent request) receives 409 Conflict, enforced by a database-level uniqueness constraint, not merely application logic.
+
+ * @summary Staff-only: record that a student has physically left the hostel for an already-approved leave request (Phase 3, Prompt 7C — Student Verification & Exit Authorization). The final Reception-side checkpoint before departure.
+
+ */
+export const authorizeExitParams = zod.object({
+  "leaveRequestId": zod.string().uuid()
+})
+
+export const authorizeExitBody = zod.object({
+  "identityConfirmed": zod.literal(true)
+}).describe('Phase 3, Prompt 7C. `identityConfirmed` must be the literal `true` — a staff attestation that the person at reception has been visually confirmed to match the student\'s identity, never independently re-derivable by the server. No other field is accepted: in particular, no client-supplied mentorApproved\/parentApproved\/ staffId\/studentId\/hostelId\/role\/authorizationStatus\/exitTimestamp value has any effect on authorization, which is resolved entirely server-side from the authenticated caller\'s own staff profile.\n')
+
+
+/**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant and receives 403, matching every other staff-only leave-request transition. reception_warden/hostel_admin are hostel-scoped to the leave request's own student; super_admin is unscoped. Requires the leave request to currently be `approved` AND to already have a real exit authorization recorded (GET /students/{rollNumber}'s `currentLeave.exitAuthorized`) — "Exit Authorized" (a staff attestation) is this system's only authoritative record of departure; a return can never be recorded for a leave that was never actually exited. At most one hostel return may ever exist per leave request — a second call (double-click, retry, or a losing concurrent request) receives 409 Conflict, enforced by a database-level uniqueness constraint, not merely application logic. This action is part of the generic Movement Engine (packages/db/src/schema/movement.ts) but is the ONLY movement type currently implemented.
+
+ * @summary Staff-only: record that a student has physically returned to the hostel for an already-exited leave request (Phase 4, Prompt 9 — Student Movement Management System, Hostel Return)
+
+ */
+export const recordHostelReturnParams = zod.object({
+  "leaveRequestId": zod.string().uuid()
+})
+
+
+/**
+ * Requires an AAL2 staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant. reception_warden/hostel_admin are hostel-scoped to their own assigned hostel, resolved entirely server-side; super_admin is unscoped. Only the 8 EOC emergency categories are ever returned — never the separate, still-unbuilt checkpoint-monitoring domain's `missed_checkpoint`/`manual_flag` rows. `q` matches a case-insensitive PREFIX against the linked student's full_name OR roll_number, mirroring `searchStudents`.
+
+ * @summary Staff-only: server-side paginated/filtered incident queue (Phase 4, Prompt 10 — Emergency Operations Center)
+
+ */
+export const listEmergenciesQueryQMax = 200;
+
+export const listEmergenciesQueryActiveOnlyDefault = false;export const listEmergenciesQueryPageDefault = 1;
+
+export const listEmergenciesQueryPageSizeDefault = 20;
+export const listEmergenciesQueryPageSizeMax = 50;
+
+export const listEmergenciesQuerySortByDefault = "reportedAt";export const listEmergenciesQuerySortDirDefault = "desc";
+
+export const listEmergenciesQueryParams = zod.object({
+  "q": zod.string().max(listEmergenciesQueryQMax).optional(),
+  "category": zod.array(zod.enum(['medical', 'personal_safety', 'fire', 'security_threat', 'violence', 'infrastructure', 'harassment', 'other']).describe('The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table\'s original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned\/accepted here.\n')).optional(),
+  "severity": zod.array(zod.enum(['critical', 'high', 'medium', 'low', 'informational'])).optional(),
+  "status": zod.array(zod.enum(['open', 'acknowledged', 'in_progress', 'resolved', 'closed']).describe('The EOC\'s own 5-state lifecycle. `escalated` (a value that exists on the underlying column for the separate checkpoint-monitoring domain) is deliberately not part of this API\'s vocabulary — no concrete EOC requirement justifies exposing it.\n')).optional(),
+  "activeOnly": zod.boolean().optional(),
+  "page": zod.number().min(1).default(listEmergenciesQueryPageDefault),
+  "pageSize": zod.number().min(1).max(listEmergenciesQueryPageSizeMax).default(listEmergenciesQueryPageSizeDefault),
+  "sortBy": zod.enum(['reportedAt', 'severity']).default(listEmergenciesQuerySortByDefault),
+  "sortDir": zod.enum(['asc', 'desc']).default(listEmergenciesQuerySortDirDefault)
+})
+
+export const listEmergenciesResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['medical', 'personal_safety', 'fire', 'security_threat', 'violence', 'infrastructure', 'harassment', 'other']).describe('The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table\'s original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned\/accepted here.\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']),
+  "status": zod.enum(['open', 'acknowledged', 'in_progress', 'resolved', 'closed']).describe('The EOC\'s own 5-state lifecycle. `escalated` (a value that exists on the underlying column for the separate checkpoint-monitoring domain) is deliberately not part of this API\'s vocabulary — no concrete EOC requirement justifies exposing it.\n'),
+  "reportedAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n')),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
+})
+
+
+/**
+ * A genuine, honest reception-desk capability — a staff member records an incident they became aware of (phone call, walk-in report, direct observation). The intended Student Application "Emergency Trigger" producer described in the product roadmap does not exist anywhere in this repository (apps/student-mobile is an unmodified template scaffold) — this endpoint is not a substitute for that pipeline, it is the real staff-attestation path this table's original design already established (mirrors the existing `manual_flag` concept). `rollNumber` resolves the student server-side, hostel-scoped identically to every other staff route — never a client-supplied studentId/hostelId/staffId.
+
+ * @summary Staff-only: log a new incident report (Phase 4, Prompt 10)
+
+ */
+export const reportEmergencyBodyRollNumberMax = 100;
+
+export const reportEmergencyBodyDescriptionMax = 4000;
+
+
+
+export const reportEmergencyBody = zod.object({
+  "rollNumber": zod.string().min(1).max(reportEmergencyBodyRollNumberMax),
+  "category": zod.enum(['medical', 'personal_safety', 'fire', 'security_threat', 'violence', 'infrastructure', 'harassment', 'other']).describe('The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table\'s original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned\/accepted here.\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']),
+  "description": zod.string().min(1).max(reportEmergencyBodyDescriptionMax)
+})
+
+
+/**
+ * Every count is a fresh aggregate query over the caller's own authorized scope — never a client-supplied or cached number.
+
+ * @summary Staff-only: server-derived active-incident counts for the EOC's statistics strip (Phase 4, Prompt 10)
+
+ */
+export const getEmergencyStatisticsResponse = zod.object({
+  "active": zod.number(),
+  "critical": zod.number(),
+  "open": zod.number(),
+  "acknowledged": zod.number(),
+  "inProgress": zod.number(),
+  "resolvedToday": zod.number()
+}).describe('Server-derived, active-incident counts — every field a fresh aggregate query over the caller\'s own authorized scope, never a client-supplied or cached number.\n')
+
+
+/**
+ * Returns 404 for both "no such incident" and "exists but outside the caller's hostel scope" — anti-enumeration, matching every other staff detail route in this API.
+
+ * @summary Staff-only: single incident detail with operational timeline (Phase 4, Prompt 10)
+
+ */
+export const getEmergencyParams = zod.object({
+  "incidentId": zod.string().uuid()
+})
+
+export const getEmergencyResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['medical', 'personal_safety', 'fire', 'security_threat', 'violence', 'infrastructure', 'harassment', 'other']).describe('The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table\'s original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned\/accepted here.\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']),
+  "status": zod.enum(['open', 'acknowledged', 'in_progress', 'resolved', 'closed']).describe('The EOC\'s own 5-state lifecycle. `escalated` (a value that exists on the underlying column for the separate checkpoint-monitoring domain) is deliberately not part of this API\'s vocabulary — no concrete EOC requirement justifies exposing it.\n'),
+  "reportedAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'response_started', 'note_added', 'resolved', 'closed']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable security_incident_events row — the EOC\'s own operational timeline (mirrors LeaveApprovalEvent\'s shape). Unlike LeaveApprovalEvent, actor identity (a staff member\'s name) IS included: this domain is staff-only end to end, so showing which colleague acted carries none of the student\/parent-facing disclosure concern that discipline exists to prevent elsewhere.\n'))
+}))
+
+
+/**
+ * Server-authoritative transition, conditional on the incident's CURRENT status being exactly `open` (a conditional UPDATE ... WHERE status = 'open', the same deterministic, concurrency-safe pattern `decide()`/`markExpired()`/`recordHostelReturn()` already established) — a losing concurrent acknowledge receives 409, never a duplicate audit event. Acknowledging also self-assigns the incident to the caller's own resolved staff identity — never a client-supplied assignee.
+
+ * @summary Staff-only: acknowledge a new incident (open -> acknowledged)
+ */
+export const acknowledgeEmergencyParams = zod.object({
+  "incidentId": zod.string().uuid()
+})
+
+export const acknowledgeEmergencyResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['medical', 'personal_safety', 'fire', 'security_threat', 'violence', 'infrastructure', 'harassment', 'other']).describe('The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table\'s original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned\/accepted here.\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']),
+  "status": zod.enum(['open', 'acknowledged', 'in_progress', 'resolved', 'closed']).describe('The EOC\'s own 5-state lifecycle. `escalated` (a value that exists on the underlying column for the separate checkpoint-monitoring domain) is deliberately not part of this API\'s vocabulary — no concrete EOC requirement justifies exposing it.\n'),
+  "reportedAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'response_started', 'note_added', 'resolved', 'closed']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable security_incident_events row — the EOC\'s own operational timeline (mirrors LeaveApprovalEvent\'s shape). Unlike LeaveApprovalEvent, actor identity (a staff member\'s name) IS included: this domain is staff-only end to end, so showing which colleague acted carries none of the student\/parent-facing disclosure concern that discipline exists to prevent elsewhere.\n'))
+}))
+
+
+/**
+ * @summary Staff-only: begin active response (acknowledged -> in_progress)
+ */
+export const startEmergencyResponseParams = zod.object({
+  "incidentId": zod.string().uuid()
+})
+
+export const startEmergencyResponseResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['medical', 'personal_safety', 'fire', 'security_threat', 'violence', 'infrastructure', 'harassment', 'other']).describe('The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table\'s original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned\/accepted here.\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']),
+  "status": zod.enum(['open', 'acknowledged', 'in_progress', 'resolved', 'closed']).describe('The EOC\'s own 5-state lifecycle. `escalated` (a value that exists on the underlying column for the separate checkpoint-monitoring domain) is deliberately not part of this API\'s vocabulary — no concrete EOC requirement justifies exposing it.\n'),
+  "reportedAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'response_started', 'note_added', 'resolved', 'closed']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable security_incident_events row — the EOC\'s own operational timeline (mirrors LeaveApprovalEvent\'s shape). Unlike LeaveApprovalEvent, actor identity (a staff member\'s name) IS included: this domain is staff-only end to end, so showing which colleague acted carries none of the student\/parent-facing disclosure concern that discipline exists to prevent elsewhere.\n'))
+}))
+
+
+/**
+ * @summary Staff-only: mark an incident resolved (in_progress -> resolved)
+ */
+export const resolveEmergencyParams = zod.object({
+  "incidentId": zod.string().uuid()
+})
+
+export const resolveEmergencyResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['medical', 'personal_safety', 'fire', 'security_threat', 'violence', 'infrastructure', 'harassment', 'other']).describe('The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table\'s original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned\/accepted here.\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']),
+  "status": zod.enum(['open', 'acknowledged', 'in_progress', 'resolved', 'closed']).describe('The EOC\'s own 5-state lifecycle. `escalated` (a value that exists on the underlying column for the separate checkpoint-monitoring domain) is deliberately not part of this API\'s vocabulary — no concrete EOC requirement justifies exposing it.\n'),
+  "reportedAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'response_started', 'note_added', 'resolved', 'closed']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable security_incident_events row — the EOC\'s own operational timeline (mirrors LeaveApprovalEvent\'s shape). Unlike LeaveApprovalEvent, actor identity (a staff member\'s name) IS included: this domain is staff-only end to end, so showing which colleague acted carries none of the student\/parent-facing disclosure concern that discipline exists to prevent elsewhere.\n'))
+}))
+
+
+/**
+ * Terminal — a closed incident accepts no further transition or note (both return 409).
+
+ * @summary Staff-only: close a resolved incident (resolved -> closed)
+ */
+export const closeEmergencyParams = zod.object({
+  "incidentId": zod.string().uuid()
+})
+
+export const closeEmergencyResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['medical', 'personal_safety', 'fire', 'security_threat', 'violence', 'infrastructure', 'harassment', 'other']).describe('The 8 categories added to security_incident_type for the Emergency Operations Center (Phase 4, Prompt 10). The table\'s original two values (missed_checkpoint, manual_flag) belong to the separate, still-unbuilt Digital Library Pass checkpoint-monitoring domain and are never returned\/accepted here.\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']),
+  "status": zod.enum(['open', 'acknowledged', 'in_progress', 'resolved', 'closed']).describe('The EOC\'s own 5-state lifecycle. `escalated` (a value that exists on the underlying column for the separate checkpoint-monitoring domain) is deliberately not part of this API\'s vocabulary — no concrete EOC requirement justifies exposing it.\n'),
+  "reportedAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'response_started', 'note_added', 'resolved', 'closed']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable security_incident_events row — the EOC\'s own operational timeline (mirrors LeaveApprovalEvent\'s shape). Unlike LeaveApprovalEvent, actor identity (a staff member\'s name) IS included: this domain is staff-only end to end, so showing which colleague acted carries none of the student\/parent-facing disclosure concern that discipline exists to prevent elsewhere.\n'))
+}))
+
+
+/**
+ * Allowed for any non-`closed` status. Immutable once written — this table (security_incident_events) mirrors leave_approval_events's append-only discipline exactly.
+
+ * @summary Staff-only: append an operational note to the incident timeline
+ */
+export const addEmergencyNoteParams = zod.object({
+  "incidentId": zod.string().uuid()
+})
+
+export const addEmergencyNoteBodyNoteMax = 2000;
+
+
+
+export const addEmergencyNoteBody = zod.object({
+  "note": zod.string().min(1).max(addEmergencyNoteBodyNoteMax)
+})
+
+
+/**
+ * Requires an AAL2 staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant (this table has no policy for that role at all). reception_warden/ hostel_admin are hostel-scoped to their own assigned hostel, resolved entirely server-side; super_admin is unscoped. `q` matches a case-insensitive PREFIX against the linked student's full_name OR roll_number, mirroring `searchStudents`/`listEmergencies`.
+
+ * @summary Staff-only: server-side paginated/filtered medical case queue (Phase 4, Prompt 11 — Health Operations Center)
+
+ */
+export const listHealthCasesQueryQMax = 200;
+
+export const listHealthCasesQueryActiveOnlyDefault = false;export const listHealthCasesQueryPageDefault = 1;
+
+export const listHealthCasesQueryPageSizeDefault = 20;
+export const listHealthCasesQueryPageSizeMax = 50;
+
+export const listHealthCasesQuerySortByDefault = "reportedAt";export const listHealthCasesQuerySortDirDefault = "desc";
+
+export const listHealthCasesQueryParams = zod.object({
+  "q": zod.string().max(listHealthCasesQueryQMax).optional(),
+  "studentId": zod.string().uuid().optional().describe('Prompt 11 closure (Medical History) — restricts the list to one student\'s own cases, still fully hostel-scoped. Used by the Health Case Detail page\'s read-only \"Medical History\" section to list a student\'s other cases from this same authoritative table — never a second, duplicated history store.\n'),
+  "category": zod.array(zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n')).optional(),
+  "severity": zod.array(zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n')).optional(),
+  "status": zod.array(zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n')).optional(),
+  "activeOnly": zod.boolean().optional(),
+  "page": zod.number().min(1).default(listHealthCasesQueryPageDefault),
+  "pageSize": zod.number().min(1).max(listHealthCasesQueryPageSizeMax).default(listHealthCasesQueryPageSizeDefault),
+  "sortBy": zod.enum(['reportedAt', 'severity']).default(listHealthCasesQuerySortByDefault),
+  "sortDir": zod.enum(['asc', 'desc']).default(listHealthCasesQuerySortDirDefault)
+})
+
+export const listHealthCasesResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n')),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
+})
+
+
+/**
+ * A genuine, honest reception-desk capability — a staff member records a medical case they became aware of. No real KIIMS/hospital-system producer exists anywhere in this repository — this endpoint is not a substitute for that future integration, it is the real staff-attestation path this domain's own design establishes (mirrors `reportEmergency`'s identical pattern). `rollNumber` resolves the student server-side, hostel-scoped identically to every other staff route — never a client-supplied studentId/hostelId/staffId/ admittedAt. `admittedAt` is set automatically, server-side, when `category` is `hospital_admission` or `emergency_admission`.
+
+ * @summary Staff-only: log a new medical case report (Phase 4, Prompt 11)
+
+ */
+export const reportHealthCaseBodyRollNumberMax = 100;
+
+export const reportHealthCaseBodyDescriptionMax = 4000;
+
+
+
+export const reportHealthCaseBody = zod.object({
+  "rollNumber": zod.string().min(1).max(reportHealthCaseBodyRollNumberMax),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "description": zod.string().min(1).max(reportHealthCaseBodyDescriptionMax)
+})
+
+
+/**
+ * Every count is a fresh aggregate query over the caller's own authorized scope — never a client-supplied or cached number.
+
+ * @summary Staff-only: server-derived case counts for the Health Operations Center's statistics strip (Phase 4, Prompt 11)
+
+ */
+export const getHealthCaseStatisticsResponse = zod.object({
+  "active": zod.number(),
+  "critical": zod.number(),
+  "newCases": zod.number(),
+  "monitoring": zod.number(),
+  "awaitingUpdate": zod.number(),
+  "admittedToday": zod.number(),
+  "dischargedToday": zod.number()
+}).describe('Server-derived counts — every field a fresh aggregate query over the caller\'s own authorized scope, never a client-supplied or cached number.\n')
+
+
+/**
+ * Returns 404 for both "no such case" and "exists but outside the caller's hostel scope" — anti-enumeration, matching every other staff detail route in this API.
+
+ * @summary Staff-only: single case detail with operational timeline (Phase 4, Prompt 11)
+
+ */
+export const getHealthCaseParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const getHealthCaseResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * Server-authoritative transition, conditional on the case's CURRENT status being exactly `new` — a losing concurrent acknowledge receives 409, never a duplicate event. Acknowledging also self-assigns the case to the caller's own resolved staff identity — never a client-supplied assignee.
+
+ * @summary Staff-only: acknowledge a new case (new -> acknowledged)
+ */
+export const acknowledgeHealthCaseParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const acknowledgeHealthCaseResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * @summary Staff-only: cancel a new case as a false alarm/duplicate (new -> cancelled)
+ */
+export const cancelHealthCaseParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const cancelHealthCaseResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * @summary Staff-only: begin active monitoring (acknowledged -> monitoring)
+ */
+export const startHealthCaseMonitoringParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const startHealthCaseMonitoringResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * @summary Staff-only: mark a monitored case as waiting on an external update (monitoring -> awaiting_update)
+ */
+export const markHealthCaseAwaitingUpdateParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const markHealthCaseAwaitingUpdateResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * @summary Staff-only: resume monitoring after receiving an update (awaiting_update -> monitoring)
+ */
+export const resumeHealthCaseMonitoringParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const resumeHealthCaseMonitoringResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * @summary Staff-only: mark a monitored case resolved without admission (monitoring -> resolved)
+ */
+export const resolveHealthCaseParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const resolveHealthCaseResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * @summary Staff-only: record discharge for an admitted, monitored case (monitoring -> discharged)
+ */
+export const dischargeHealthCaseParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const dischargeHealthCaseResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * Terminal — a closed case accepts no further transition or note (both return 409).
+
+ * @summary Staff-only: close a resolved or discharged case (resolved|discharged -> closed)
+ */
+export const closeHealthCaseParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const closeHealthCaseResponse = zod.object({
+  "id": zod.string().uuid(),
+  "studentId": zod.string().uuid(),
+  "studentFullName": zod.string(),
+  "studentRollNumber": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "category": zod.enum(['hospital_admission', 'medical_observation', 'emergency_admission', 'outpatient_visit', 'discharge', 'medical_follow_up', 'accident', 'other_medical_event']).describe('Phase 4, Prompt 11 — Health Operations Center\'s own case category vocabulary (health_cases.category — a new table, not an extension of security_incidents; see health-cases path\/domain doc comments for the full reconnaissance).\n'),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low', 'informational']).describe('Reuses the Emergency Operations Center\'s own severity vocabulary directly (no competing concept).\n'),
+  "status": zod.enum(['new', 'acknowledged', 'monitoring', 'awaiting_update', 'resolved', 'discharged', 'closed', 'cancelled']).describe('The Health Operations Center\'s own 8-state lifecycle — materially different from the EOC\'s 5-state open->closed matrix (monitoring\/ awaiting_update\/admission\/discharge concepts have no EOC equivalent).\n'),
+  "reportedAt": zod.string().datetime({}),
+  "admittedAt": zod.string().datetime({}).nullable(),
+  "latestUpdateAt": zod.string().datetime({}),
+  "assignedStaffId": zod.string().uuid().nullable(),
+  "assignedStaffName": zod.string().nullable()
+}).describe('Deliberately minimal student identification (name\/roll number\/ hostel\/room) — reused DISPLAY fields only, never a duplicated guardian\/leave query. Use \"Open Student Profile\" (the existing Student Operations Center) for anything more.\n').and(zod.object({
+  "description": zod.string().nullable(),
+  "resolvedAt": zod.string().datetime({}).nullable(),
+  "dischargedAt": zod.string().datetime({}).nullable(),
+  "closedAt": zod.string().datetime({}).nullable(),
+  "cancelledAt": zod.string().datetime({}).nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['created', 'acknowledged', 'monitoring_started', 'awaiting_update', 'update_received', 'note_added', 'resolved', 'discharge_recorded', 'closed', 'cancelled']),
+  "note": zod.string().nullable(),
+  "actorStaffName": zod.string().nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable health_case_events row — this domain\'s own operational timeline (mirrors EmergencyEvent\'s shape). Staff-only end to end, so actor identity is included, same reasoning as EmergencyEvent.\n'))
+}))
+
+
+/**
+ * Allowed for any status except `closed`/`cancelled`. Immutable once written — this table (health_case_events) mirrors security_incident_events'/leave_approval_events' append-only discipline exactly.
+
+ * @summary Staff-only: append an operational note to the case timeline
+ */
+export const addHealthCaseNoteParams = zod.object({
+  "caseId": zod.string().uuid()
+})
+
+export const addHealthCaseNoteBodyNoteMax = 2000;
+
+
+
+export const addHealthCaseNoteBody = zod.object({
+  "note": zod.string().min(1).max(addHealthCaseNoteBodyNoteMax)
+})
+
+
+/**
+ * Requires an AAL2 (MFA-verified) staff session with role reception_warden, hostel_admin, or super_admin — matching every other certified staff-only leave/student route's role set and AAL2/hostel-scope shape exactly. reception_warden and hostel_admin see only students in their own assigned hostel, resolved entirely server-side from the authenticated caller's own staff row — never a client-supplied filter; super_admin is unscoped. `q`, when supplied, matches a case-insensitive PREFIX against full_name OR roll_number — the only two fields this system's authoritative `students` schema indexes for search; no department/program/gender/ phone/academic-year field exists anywhere in this schema; none is exposed. Deterministically ordered (the requested sort field plus the student's own id as a tie-breaker) and paginated server-side — never the caller's whole in-scope population downloaded and filtered client-side.
+
+ * @summary Staff-only: server-side student search (Phase 4, Prompt 8 — Student Operations Center)
+
+ */
+export const searchStudentsQueryQMax = 200;
+
+export const searchStudentsQueryPageDefault = 1;
+
+export const searchStudentsQueryPageSizeDefault = 20;
+export const searchStudentsQueryPageSizeMax = 50;
+
+export const searchStudentsQuerySortByDefault = "fullName";export const searchStudentsQuerySortDirDefault = "asc";
+
+export const searchStudentsQueryParams = zod.object({
+  "q": zod.string().max(searchStudentsQueryQMax).optional(),
+  "page": zod.number().min(1).default(searchStudentsQueryPageDefault),
+  "pageSize": zod.number().min(1).max(searchStudentsQueryPageSizeMax).default(searchStudentsQueryPageSizeDefault),
+  "sortBy": zod.enum(['fullName', 'rollNumber']).default(searchStudentsQuerySortByDefault),
+  "sortDir": zod.enum(['asc', 'desc']).default(searchStudentsQuerySortDirDefault)
+})
+
+export const searchStudentsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "rollNumber": zod.string(),
+  "fullName": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomId": zod.string().uuid().nullable(),
+  "roomNumber": zod.string().nullable()
+}).describe('Deliberately narrower than the full `students` row — never `authUserId` (an internal identity-linkage field with no product purpose on a staff-facing read surface). No department\/program\/ semester\/gender\/phone\/photograph field is represented anywhere in this schema — none exists in the authoritative `students` table.\n')),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
+})
+
+
+/**
+ * Same AAL2/role/hostel-scope shape as GET /students. Returns only authoritative DigiHostel data — identity, hostel/room, linked parent/guardian contact (name, relationship, phone only — never internal ids or authentication identifiers), and the student's own most recent DigiHostel Hostel Leaving Request with its immutable approval-event timeline, reused unmutated from the certified Parent Approval / Exit Authorization workflow (never the separate KIIT SAP Holiday Request concept, which has no integration anywhere in this system). A roll number that does not exist, or that exists outside the caller's hostel scope, is deliberately indistinguishable (404, anti-enumeration) — identical shape to GET /leave-requests/{leaveRequestId}.
+
+ * @summary Staff-only: read-only student profile (Phase 4, Prompt 8 — Student Operations Center)
+
+ */
+export const getStudentProfilePathRollNumberMax = 100;
+
+
+
+export const getStudentProfileParams = zod.object({
+  "rollNumber": zod.string().max(getStudentProfilePathRollNumberMax)
+})
+
+export const getStudentProfileResponse = zod.object({
+  "id": zod.string().uuid(),
+  "rollNumber": zod.string(),
+  "fullName": zod.string(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "roomId": zod.string().uuid().nullable(),
+  "roomNumber": zod.string().nullable(),
+  "guardians": zod.array(zod.object({
+  "fullName": zod.string(),
+  "relationshipType": zod.enum(['father', 'mother', 'guardian']).describe('Mirrors packages\/db\/src\/schema\/enums.ts\'s parent_relationship_type enum.'),
+  "phoneNumber": zod.string()
+}).describe('One linked parent\/guardian, minimized to exactly what the Student Operations Center profile needs — never an internal id or authentication identifier.\n')),
+  "currentLeave": zod.object({
+  "id": zod.string().uuid(),
+  "status": zod.enum(['pending', 'father_notified', 'mother_notified', 'guardian_notified', 'approved', 'rejected', 'in_app_call', 'manual_verification', 'expired']).describe('Full state vocabulary already defined by the schema (packages\/db\/src\/schema\/enums.ts, leave_request_status) — this endpoint set only ever produces approved\/rejected transitions today; the escalation-notification states are included because they are part of the same enum, not because this task creates them.\n'),
+  "reason": zod.string(),
+  "startDate": zod.string().date(),
+  "endDate": zod.string().date(),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({}),
+  "exitAuthorized": zod.boolean(),
+  "exitAuthorizedAt": zod.string().datetime({}).nullable(),
+  "returnRecorded": zod.boolean(),
+  "returnedAt": zod.string().datetime({}).nullable()
+}).describe('The student\'s own most recent DigiHostel Hostel Leaving Request — reused, unmutated, read-only data from the certified Parent Approval \/ Exit Authorization workflow. Never the separate KIIT SAP Holiday Request concept.\n').nullable(),
+  "timeline": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "eventType": zod.enum(['notified', 'responded', 'escalated', 'expired', 'manual_override']),
+  "response": zod.enum(['approved', 'rejected', 'no_response']).nullable(),
+  "occurredAt": zod.string().datetime({})
+}).describe('One immutable leave_approval_events row for the student\'s current leave request — same actor-omission discipline as LeaveApprovalEvent: never reveals which specific parent\/guardian\/ staff member acted.\n')),
+  "hostelPresence": zod.enum(['inside_hostel', 'outside_hostel']).describe('Server-derived, never persisted. \"outside_hostel\" iff the student\'s own current leave request is genuinely exit-authorized and has no return recorded yet; \"inside_hostel\" otherwise (including \"no leave request at all\"). Never trust a client-supplied value for this — it is computed entirely server-side from leave_exit_authorizations and movements (Phase 4, Prompt 9 remediation).\n')
+})
+
+
+/**
+ * Requires an AAL2 staff session with role reception_warden, hostel_admin, or super_admin — library_incharge has no grant on `audit:view`. `audit_logs` itself has zero client-facing RLS by design; this is the sole privileged, staff-authorized read path. `audit_logs` carries no hostel_id column — hostel scope is derived server-side per row by joining entity_id back to the owning domain table (leave_requests/security_incidents/health_cases -> students, or staff directly). Rows whose entity_type has no such join (trusted_devices, device_registration_challenges — parent-security events with no hostel concept) are visible only to super_admin. reception_warden/hostel_admin are hostel-scoped to their own assigned hostel, resolved entirely server-side; super_admin is unscoped. `q` matches a case-insensitive PREFIX against the resolved student's full_name/roll_number OR the resolved actor's name, mirroring `searchStudents`/`listEmergencies`.
+
+ * @summary Staff-only: server-side paginated/filtered read over audit_logs (Phase 5, Prompt 12 — Enterprise Audit Center)
+
+ */
+export const listAuditEventsQueryQMax = 200;
+
+export const listAuditEventsQueryPageDefault = 1;
+
+export const listAuditEventsQueryPageSizeDefault = 20;
+export const listAuditEventsQueryPageSizeMax = 50;
+
+export const listAuditEventsQuerySortDirDefault = "desc";
+
+export const listAuditEventsQueryParams = zod.object({
+  "q": zod.string().max(listAuditEventsQueryQMax).optional(),
+  "module": zod.array(zod.enum(['leave', 'movement', 'emergency', 'health', 'device', 'staff-auth', 'other']).describe('A normalized, presentation-layer grouping derived server-side from each audit_logs row\'s own `action` prefix (Phase 5, Prompt 12) — never a stored column. `staff-auth` covers the staff_sign_in_success\/ mfa_success\/mfa_failure\/sign_out events; `other` covers any action that does not match a known module prefix (fails open to visibility, never silently dropped).\n')).optional(),
+  "actorType": zod.array(zod.enum(['student', 'parent', 'staff', 'system']).describe('The audit_actor_type column\'s own real values — never invented.')).optional(),
+  "entityType": zod.array(zod.enum(['leave_requests', 'security_incidents', 'health_cases', 'staff', 'trusted_devices', 'device_registration_challenges']).describe('Every distinct entity_type value any module currently writes, confirmed by repository-wide search. trusted_devices and device_registration_challenges rows have no hostel concept at all and are therefore visible only to super_admin (see GET \/audit\'s description).\n')).optional(),
+  "dateFrom": zod.string().datetime({}).optional(),
+  "dateTo": zod.string().datetime({}).optional(),
+  "page": zod.number().min(1).default(listAuditEventsQueryPageDefault),
+  "pageSize": zod.number().min(1).max(listAuditEventsQueryPageSizeMax).default(listAuditEventsQueryPageSizeDefault),
+  "sortDir": zod.enum(['asc', 'desc']).default(listAuditEventsQuerySortDirDefault)
+})
+
+export const listAuditEventsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "occurredAt": zod.string().datetime({}),
+  "action": zod.string(),
+  "module": zod.enum(['leave', 'movement', 'emergency', 'health', 'device', 'staff-auth', 'other']).describe('A normalized, presentation-layer grouping derived server-side from each audit_logs row\'s own `action` prefix (Phase 5, Prompt 12) — never a stored column. `staff-auth` covers the staff_sign_in_success\/ mfa_success\/mfa_failure\/sign_out events; `other` covers any action that does not match a known module prefix (fails open to visibility, never silently dropped).\n'),
+  "actorType": zod.enum(['student', 'parent', 'staff', 'system']).describe('The audit_actor_type column\'s own real values — never invented.'),
+  "actorId": zod.string().uuid().nullable(),
+  "actorName": zod.string().nullable(),
+  "actorRole": zod.string().nullable(),
+  "entityType": zod.string(),
+  "entityId": zod.string().uuid(),
+  "studentId": zod.string().uuid().nullable(),
+  "studentFullName": zod.string().nullable(),
+  "studentRollNumber": zod.string().nullable(),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "metadata": zod.record(zod.string(), zod.unknown())
+}).describe('One audit_logs row, with hostel\/student\/actor identity resolved server-side via a join back to the owning domain table — never a second, duplicated audit store. metadata is passed through unmodified from the authoritative row (never edited, never enriched with anything the writer didn\'t record).\n')),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
+})
+
+
+/**
+ * Same authorization/hostel-scope boundary as GET /audit. Every field is a fresh aggregate query over the caller's own authorized scope, never a client-supplied or cached number.
+
+ * @summary Staff-only: today's event counts within the caller's scope, by module (Phase 5, Prompt 12)
+
+ */
+export const getAuditStatisticsResponse = zod.object({
+  "eventsToday": zod.number(),
+  "byModule": zod.object({
+  "leave": zod.number(),
+  "movement": zod.number(),
+  "emergency": zod.number(),
+  "health": zod.number(),
+  "device": zod.number(),
+  "staff-auth": zod.number(),
+  "other": zod.number()
+})
+}).describe('Server-derived, today-scoped event counts, grouped by module — every field a fresh aggregate query over the caller\'s own authorized scope, never a client-supplied or cached number.\n')
+
+
+/**
+ * Requires an AAL2 super_admin session — the first super_admin-only endpoint in this API family (every other staff-facing route uses the standard reception_warden/hostel_admin/super_admin set). Matches `staff`'s own pre-existing `staff_all_super_admin` RLS grant exactly. `q` matches a case-insensitive PREFIX against full_name OR email.
+
+ * @summary super_admin-only: server-side paginated/filtered staff directory (Phase 5, Prompt 13 — Identity & Access Administration Center)
+
+ */
+export const listStaffQueryQMax = 200;
+
+export const listStaffQueryPageDefault = 1;
+
+export const listStaffQueryPageSizeDefault = 20;
+export const listStaffQueryPageSizeMax = 50;
+
+export const listStaffQuerySortDirDefault = "desc";
+
+export const listStaffQueryParams = zod.object({
+  "q": zod.string().max(listStaffQueryQMax).optional(),
+  "role": zod.array(zod.enum(['reception_warden', 'library_incharge', 'hostel_admin', 'super_admin']).describe('The real `staff_role` database enum values — never invented.')).optional(),
+  "status": zod.array(zod.enum(['active', 'suspended']).describe('Phase 5, Prompt 13 — the minimal, safe lifecycle representation `staff.status` actually supports. Enforcement is request-time, not merely cosmetic (see `GET \/staff`\'s description).\n')).optional(),
+  "hostelId": zod.array(zod.string().uuid()).optional(),
+  "page": zod.number().min(1).default(listStaffQueryPageDefault),
+  "pageSize": zod.number().min(1).max(listStaffQueryPageSizeMax).default(listStaffQueryPageSizeDefault),
+  "sortDir": zod.enum(['asc', 'desc']).default(listStaffQuerySortDirDefault)
+})
+
+export const listStaffResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "fullName": zod.string(),
+  "email": zod.string().nullable(),
+  "role": zod.enum(['reception_warden', 'library_incharge', 'hostel_admin', 'super_admin']).describe('The real `staff_role` database enum values — never invented.'),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "status": zod.enum(['active', 'suspended']).describe('Phase 5, Prompt 13 — the minimal, safe lifecycle representation `staff.status` actually supports. Enforcement is request-time, not merely cosmetic (see `GET \/staff`\'s description).\n'),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('One `staff` row, with `email` resolved via a join to `auth.users` (the authoritative source for staff email — `staff` itself has no email column).\n')),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
+})
+
+
+/**
+ * Creates a real Supabase Auth `auth.users` row via the Admin API (no password is generated, stored, or returned by this backend — Supabase's own invite email carries a secure link for the new staff member to set their own initial password) and, in the same logical operation, the corresponding `staff` row. If the `staff` insert fails after the auth user was created, the orphaned auth user is deleted as a compensating action.
+
+ * @summary super_admin-only: provision a new staff account (Phase 5, Prompt 13)
+
+ */
+export const createStaffBodyFullNameMax = 200;
+
+export const createStaffBodyEmailMax = 255;
+
+
+
+export const createStaffBody = zod.object({
+  "fullName": zod.string().min(1).max(createStaffBodyFullNameMax),
+  "email": zod.string().email().max(createStaffBodyEmailMax),
+  "role": zod.enum(['reception_warden', 'library_incharge', 'hostel_admin', 'super_admin']).describe('The real `staff_role` database enum values — never invented.'),
+  "hostelId": zod.string().uuid().nullable().describe('Required (non-null) for reception_warden\/hostel_admin — their entire authority is hostel-scoped. May be null for library_incharge\/super_admin.\n')
+})
+
+
+/**
+ * @summary super_admin-only: staff counts by role/status (Phase 5, Prompt 13)
+ */
+export const getStaffStatisticsResponse = zod.object({
+  "totalStaff": zod.number(),
+  "activeStaff": zod.number(),
+  "suspendedStaff": zod.number(),
+  "byRole": zod.object({
+  "reception_warden": zod.number(),
+  "library_incharge": zod.number(),
+  "hostel_admin": zod.number(),
+  "super_admin": zod.number()
+})
+}).describe('Server-derived counts — every field a fresh aggregate query, never a client-supplied or cached number.\n')
+
+
+/**
+ * @summary super_admin-only: staff account detail (Phase 5, Prompt 13)
+ */
+export const getStaffParams = zod.object({
+  "staffId": zod.string().uuid()
+})
+
+export const getStaffResponse = zod.object({
+  "id": zod.string().uuid(),
+  "fullName": zod.string(),
+  "email": zod.string().nullable(),
+  "role": zod.enum(['reception_warden', 'library_incharge', 'hostel_admin', 'super_admin']).describe('The real `staff_role` database enum values — never invented.'),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "status": zod.enum(['active', 'suspended']).describe('Phase 5, Prompt 13 — the minimal, safe lifecycle representation `staff.status` actually supports. Enforcement is request-time, not merely cosmetic (see `GET \/staff`\'s description).\n'),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('One `staff` row, with `email` resolved via a join to `auth.users` (the authoritative source for staff email — `staff` itself has no email column).\n')
+
+
+/**
+ * Refuses to target the caller's OWN staff id (self-escalation defense) and refuses to demote the last remaining active super_admin (409).
+
+ * @summary super_admin-only: change a staff member's role (Phase 5, Prompt 13)
+ */
+export const changeStaffRoleParams = zod.object({
+  "staffId": zod.string().uuid()
+})
+
+export const changeStaffRoleBody = zod.object({
+  "role": zod.enum(['reception_warden', 'library_incharge', 'hostel_admin', 'super_admin']).describe('The real `staff_role` database enum values — never invented.')
+})
+
+export const changeStaffRoleResponse = zod.object({
+  "id": zod.string().uuid(),
+  "fullName": zod.string(),
+  "email": zod.string().nullable(),
+  "role": zod.enum(['reception_warden', 'library_incharge', 'hostel_admin', 'super_admin']).describe('The real `staff_role` database enum values — never invented.'),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "status": zod.enum(['active', 'suspended']).describe('Phase 5, Prompt 13 — the minimal, safe lifecycle representation `staff.status` actually supports. Enforcement is request-time, not merely cosmetic (see `GET \/staff`\'s description).\n'),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('One `staff` row, with `email` resolved via a join to `auth.users` (the authoritative source for staff email — `staff` itself has no email column).\n')
+
+
+/**
+ * Refuses to target the caller's OWN staff id. A null hostelId is rejected if the target's CURRENT role requires one (reception_warden/hostel_admin).
+
+ * @summary super_admin-only: change a staff member's hostel assignment (Phase 5, Prompt 13)
+ */
+export const changeStaffHostelParams = zod.object({
+  "staffId": zod.string().uuid()
+})
+
+export const changeStaffHostelBody = zod.object({
+  "hostelId": zod.string().uuid().nullable()
+})
+
+export const changeStaffHostelResponse = zod.object({
+  "id": zod.string().uuid(),
+  "fullName": zod.string(),
+  "email": zod.string().nullable(),
+  "role": zod.enum(['reception_warden', 'library_incharge', 'hostel_admin', 'super_admin']).describe('The real `staff_role` database enum values — never invented.'),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "status": zod.enum(['active', 'suspended']).describe('Phase 5, Prompt 13 — the minimal, safe lifecycle representation `staff.status` actually supports. Enforcement is request-time, not merely cosmetic (see `GET \/staff`\'s description).\n'),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('One `staff` row, with `email` resolved via a join to `auth.users` (the authoritative source for staff email — `staff` itself has no email column).\n')
+
+
+/**
+ * Enforcement is request-time, not merely cosmetic: a suspended staff member's very next authenticated request fails with 401 (see `apps/reception-dashboard/docs/identity-admin.md`). Refuses to target the caller's OWN staff id and refuses to suspend the last remaining active super_admin (409).
+
+ * @summary super_admin-only: suspend or reactivate a staff member (Phase 5, Prompt 13)
+ */
+export const changeStaffStatusParams = zod.object({
+  "staffId": zod.string().uuid()
+})
+
+export const changeStaffStatusBody = zod.object({
+  "status": zod.enum(['active', 'suspended']).describe('Phase 5, Prompt 13 — the minimal, safe lifecycle representation `staff.status` actually supports. Enforcement is request-time, not merely cosmetic (see `GET \/staff`\'s description).\n')
+})
+
+export const changeStaffStatusResponse = zod.object({
+  "id": zod.string().uuid(),
+  "fullName": zod.string(),
+  "email": zod.string().nullable(),
+  "role": zod.enum(['reception_warden', 'library_incharge', 'hostel_admin', 'super_admin']).describe('The real `staff_role` database enum values — never invented.'),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "status": zod.enum(['active', 'suspended']).describe('Phase 5, Prompt 13 — the minimal, safe lifecycle representation `staff.status` actually supports. Enforcement is request-time, not merely cosmetic (see `GET \/staff`\'s description).\n'),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('One `staff` row, with `email` resolved via a join to `auth.users` (the authoritative source for staff email — `staff` itself has no email column).\n')
+
+
+/**
+ * Triggers Supabase Auth's own password-recovery email — this backend never generates, stores, returns, or logs a password. Refuses to target the caller's OWN staff id.
+
+ * @summary super_admin-only: trigger a password-reset email for a staff member (Phase 5, Prompt 13)
+
+ */
+export const resetStaffPasswordParams = zod.object({
+  "staffId": zod.string().uuid()
+})
+
+
+/**
+ * Calls Supabase Auth's Admin API `signOut(userId, "global")` — a blunt, whole-account revocation (this SDK surface does not expose a per-session list to revoke individually). Refuses to target the caller's OWN staff id.
+
+ * @summary super_admin-only: revoke every active session for a staff member (Phase 5, Prompt 13)
+
+ */
+export const forceSignOutStaffParams = zod.object({
+  "staffId": zod.string().uuid()
+})
+
+
+/**
+ * A static, server-owned allow-list (`domain` on `configuration_entries` is `text`, not a database enum — this endpoint is the actual source of truth a client should render as options, never a hard-coded frontend copy of the list).
+
+ * @summary hostel_admin/super_admin: the fixed, application-validated list of configuration domains (Phase 5, Prompt 14)
+ */
+export const listConfigurationDomainsResponse = zod.object({
+  "domains": zod.array(zod.enum(['hostel', 'approval', 'movement', 'emergency', 'health', 'notification', 'system', 'feature_flags']).describe('Phase 5, Prompt 14 — the fixed, application-validated allow-list (`configuration_entries.domain` is `text`, not a database enum; `GET \/configuration\/domains` is this list\'s real runtime source).\n'))
+})
+
+
+/**
+ * hostel_admin sees counts across every global entry plus only their own hostel's entries; super_admin is unscoped.
+
+ * @summary hostel_admin/super_admin: configuration entry counts by domain, within the caller's scope (Phase 5, Prompt 14)
+ */
+export const getConfigurationStatisticsResponse = zod.object({
+  "totalEntries": zod.number(),
+  "activeEntries": zod.number(),
+  "inactiveEntries": zod.number(),
+  "byDomain": zod.object({
+  "hostel": zod.number(),
+  "approval": zod.number(),
+  "movement": zod.number(),
+  "emergency": zod.number(),
+  "health": zod.number(),
+  "notification": zod.number(),
+  "system": zod.number(),
+  "feature_flags": zod.number()
+})
+}).describe('Server-derived counts, within the caller\'s own hostel scope.')
+
+
+/**
+ * Runs the EXACT SAME validation `POST /configuration` applies before writing (key format/domain allow-list/value-type consistency/scope- hostel consistency/hostel existence) without persisting anything — the Configuration Editor's "Preview" step. Does not check hostel-scope authorization or duplicate-key conflicts (those depend on the specific create/update call this preview does not perform).
+
+ * @summary hostel_admin/super_admin: stateless validation preview — never persists anything (Phase 5, Prompt 14)
+ */
+export const validateConfigurationBodyKeyMax = 100;
+
+
+
+export const validateConfigurationBody = zod.object({
+  "domain": zod.enum(['hostel', 'approval', 'movement', 'emergency', 'health', 'notification', 'system', 'feature_flags']).describe('Phase 5, Prompt 14 — the fixed, application-validated allow-list (`configuration_entries.domain` is `text`, not a database enum; `GET \/configuration\/domains` is this list\'s real runtime source).\n'),
+  "key": zod.string().min(1).max(validateConfigurationBodyKeyMax),
+  "value": zod.unknown(),
+  "valueType": zod.enum(['string', 'number', 'boolean', 'json']).describe('Drives server-side value validation and the editor\'s type-aware input control.'),
+  "scope": zod.enum(['global', 'hostel']),
+  "hostelId": zod.string().uuid().nullable()
+})
+
+export const validateConfigurationResponse = zod.object({
+  "valid": zod.boolean(),
+  "kind": zod.enum(['valid', 'invalid_hostel', 'hostel_required_for_scope', 'hostel_not_permitted_for_scope', 'invalid_value', 'invalid_key']).optional(),
+  "reason": zod.string().nullish()
+}).describe('`valid: true` iff `kind` was `\"valid\"`; `reason` is populated only for the two outcomes that carry a human-readable explanation (`invalid_value`\/`invalid_key`) — the others are self-explanatory from `kind` alone.\n')
+
+
+/**
+ * @summary hostel_admin/super_admin: the configuration directory, server-side paginated/filtered/sorted (Phase 5, Prompt 14)
+ */
+export const listConfigurationQueryQMax = 200;
+
+export const listConfigurationQueryPageDefault = 1;
+
+export const listConfigurationQueryPageSizeDefault = 20;
+export const listConfigurationQueryPageSizeMax = 50;
+
+export const listConfigurationQuerySortDirDefault = "desc";
+
+export const listConfigurationQueryParams = zod.object({
+  "domain": zod.array(zod.enum(['hostel', 'approval', 'movement', 'emergency', 'health', 'notification', 'system', 'feature_flags']).describe('Phase 5, Prompt 14 — the fixed, application-validated allow-list (`configuration_entries.domain` is `text`, not a database enum; `GET \/configuration\/domains` is this list\'s real runtime source).\n')).optional(),
+  "scope": zod.array(zod.enum(['global', 'hostel'])).optional(),
+  "hostelId": zod.array(zod.string().uuid()).optional(),
+  "isActive": zod.boolean().optional(),
+  "q": zod.string().max(listConfigurationQueryQMax).optional(),
+  "page": zod.number().min(1).default(listConfigurationQueryPageDefault),
+  "pageSize": zod.number().min(1).max(listConfigurationQueryPageSizeMax).default(listConfigurationQueryPageSizeDefault),
+  "sortDir": zod.enum(['asc', 'desc']).default(listConfigurationQuerySortDirDefault)
+})
+
+export const listConfigurationResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "domain": zod.enum(['hostel', 'approval', 'movement', 'emergency', 'health', 'notification', 'system', 'feature_flags']).describe('Phase 5, Prompt 14 — the fixed, application-validated allow-list (`configuration_entries.domain` is `text`, not a database enum; `GET \/configuration\/domains` is this list\'s real runtime source).\n'),
+  "key": zod.string(),
+  "value": zod.unknown(),
+  "valueType": zod.enum(['string', 'number', 'boolean', 'json']).describe('Drives server-side value validation and the editor\'s type-aware input control.'),
+  "description": zod.string().nullable(),
+  "scope": zod.enum(['global', 'hostel']),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "isActive": zod.boolean(),
+  "version": zod.number().describe('Optimistic-concurrency token — pass back as `expectedVersion` on `PATCH`.'),
+  "createdBy": zod.string().uuid().nullable(),
+  "createdByName": zod.string().nullable(),
+  "updatedBy": zod.string().uuid().nullable(),
+  "updatedByName": zod.string().nullable(),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('One `configuration_entries` row. `value`\'s JSON shape is validated server-side against `valueType` on every write (`POST`\/`PATCH`) — never merely a client-side convention.\n')),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
+})
+
+
+/**
+ * A hostel_admin may only create a `"scope": "hostel"` entry naming their OWN hostel — never a global entry, never another hostel's (`403`). super_admin is unscoped. Never stores a secret — a key/domain resembling password/token/API key/credential is rejected (`400`).
+
+ * @summary hostel_admin/super_admin: create a configuration entry (Phase 5, Prompt 14)
+ */
+export const createConfigurationEntryBodyKeyMax = 100;
+
+export const createConfigurationEntryBodyDescriptionMax = 2000;
+
+
+
+export const createConfigurationEntryBody = zod.object({
+  "domain": zod.enum(['hostel', 'approval', 'movement', 'emergency', 'health', 'notification', 'system', 'feature_flags']).describe('Phase 5, Prompt 14 — the fixed, application-validated allow-list (`configuration_entries.domain` is `text`, not a database enum; `GET \/configuration\/domains` is this list\'s real runtime source).\n'),
+  "key": zod.string().min(1).max(createConfigurationEntryBodyKeyMax),
+  "value": zod.unknown(),
+  "valueType": zod.enum(['string', 'number', 'boolean', 'json']).describe('Drives server-side value validation and the editor\'s type-aware input control.'),
+  "description": zod.string().max(createConfigurationEntryBodyDescriptionMax).nullish(),
+  "scope": zod.enum(['global', 'hostel']),
+  "hostelId": zod.string().uuid().nullable()
+})
+
+
+/**
+ * @summary hostel_admin/super_admin: configuration entry detail (Phase 5, Prompt 14)
+ */
+export const getConfigurationEntryParams = zod.object({
+  "entryId": zod.string().uuid()
+})
+
+export const getConfigurationEntryResponse = zod.object({
+  "id": zod.string().uuid(),
+  "domain": zod.enum(['hostel', 'approval', 'movement', 'emergency', 'health', 'notification', 'system', 'feature_flags']).describe('Phase 5, Prompt 14 — the fixed, application-validated allow-list (`configuration_entries.domain` is `text`, not a database enum; `GET \/configuration\/domains` is this list\'s real runtime source).\n'),
+  "key": zod.string(),
+  "value": zod.unknown(),
+  "valueType": zod.enum(['string', 'number', 'boolean', 'json']).describe('Drives server-side value validation and the editor\'s type-aware input control.'),
+  "description": zod.string().nullable(),
+  "scope": zod.enum(['global', 'hostel']),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "isActive": zod.boolean(),
+  "version": zod.number().describe('Optimistic-concurrency token — pass back as `expectedVersion` on `PATCH`.'),
+  "createdBy": zod.string().uuid().nullable(),
+  "createdByName": zod.string().nullable(),
+  "updatedBy": zod.string().uuid().nullable(),
+  "updatedByName": zod.string().nullable(),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('One `configuration_entries` row. `value`\'s JSON shape is validated server-side against `valueType` on every write (`POST`\/`PATCH`) — never merely a client-side convention.\n')
+
+
+/**
+ * Optimistic concurrency: `expectedVersion` must match the entry's current `version` or the update is refused (`409`) rather than silently overwriting a concurrent change. A hostel_admin may only update an entry within their own hostel scope (`403`).
+
+ * @summary hostel_admin/super_admin: update a configuration entry's value/description/active state (Phase 5, Prompt 14)
+ */
+export const updateConfigurationEntryParams = zod.object({
+  "entryId": zod.string().uuid()
+})
+
+
+export const updateConfigurationEntryBodyDescriptionMax = 2000;
+
+
+
+export const updateConfigurationEntryBody = zod.object({
+  "expectedVersion": zod.number().min(1),
+  "value": zod.unknown().optional(),
+  "description": zod.string().max(updateConfigurationEntryBodyDescriptionMax).nullish(),
+  "isActive": zod.boolean().optional()
+})
+
+export const updateConfigurationEntryResponse = zod.object({
+  "id": zod.string().uuid(),
+  "domain": zod.enum(['hostel', 'approval', 'movement', 'emergency', 'health', 'notification', 'system', 'feature_flags']).describe('Phase 5, Prompt 14 — the fixed, application-validated allow-list (`configuration_entries.domain` is `text`, not a database enum; `GET \/configuration\/domains` is this list\'s real runtime source).\n'),
+  "key": zod.string(),
+  "value": zod.unknown(),
+  "valueType": zod.enum(['string', 'number', 'boolean', 'json']).describe('Drives server-side value validation and the editor\'s type-aware input control.'),
+  "description": zod.string().nullable(),
+  "scope": zod.enum(['global', 'hostel']),
+  "hostelId": zod.string().uuid().nullable(),
+  "hostelName": zod.string().nullable(),
+  "isActive": zod.boolean(),
+  "version": zod.number().describe('Optimistic-concurrency token — pass back as `expectedVersion` on `PATCH`.'),
+  "createdBy": zod.string().uuid().nullable(),
+  "createdByName": zod.string().nullable(),
+  "updatedBy": zod.string().uuid().nullable(),
+  "updatedByName": zod.string().nullable(),
+  "createdAt": zod.string().datetime({}),
+  "updatedAt": zod.string().datetime({})
+}).describe('One `configuration_entries` row. `value`\'s JSON shape is validated server-side against `valueType` on every write (`POST`\/`PATCH`) — never merely a client-side convention.\n')

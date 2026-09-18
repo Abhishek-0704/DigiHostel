@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo } from "react";
+import { AccessibilityInfo, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { PageContainer } from "@/src/components/layout/PageContainer";
 import { PageHeader } from "@/src/components/layout/PageHeader";
@@ -54,6 +54,15 @@ export default function NotificationDetails() {
     () => allNotifications.find((n) => n.id === id),
     [allNotifications, id],
   );
+
+  // See src/components/ui/TextField.tsx's identical fix — `accessibilityRole="alert"`
+  // alone is not reliably announced by TalkBack/VoiceOver on this platform.
+  // Placed before the early returns below (rules of hooks).
+  useEffect(() => {
+    if (actionError) {
+      AccessibilityInfo.announceForAccessibility(actionError.userMessage);
+    }
+  }, [actionError]);
 
   if (isLoading && !notification) {
     return (

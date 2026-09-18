@@ -1,0 +1,11 @@
+.wrapper {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: var(--spacing-xl);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

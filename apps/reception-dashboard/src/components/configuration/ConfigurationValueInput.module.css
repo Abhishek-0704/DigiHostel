@@ -1,0 +1,27 @@
+.input {
+  width: 100%;
+  padding: 6px var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.jsonWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.jsonTextarea {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  resize: vertical;
+}
+
+.jsonError {
+  font-size: 12px;
+  color: var(--color-error, #c0392b);
+  margin: 0;
+}

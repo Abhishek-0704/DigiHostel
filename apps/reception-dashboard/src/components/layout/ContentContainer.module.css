@@ -1,0 +1,11 @@
+.standard {
+  max-width: 840px;
+}
+
+.wide {
+  max-width: 1280px;
+}
+
+.full {
+  max-width: none;
+}

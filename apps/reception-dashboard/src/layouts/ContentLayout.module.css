@@ -1,0 +1,40 @@
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+  flex-wrap: wrap;
+}
+
+.titleBlock {
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.description {
+  margin: var(--spacing-xs) 0 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: 60ch;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}

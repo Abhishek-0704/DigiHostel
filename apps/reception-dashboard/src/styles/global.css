@@ -1,0 +1,44 @@
+@import "./tokens.css";
+
+/* Minimal reset + base typography (Prompt 0.2 foundation). No CSS
+   framework/component library added — a plain, token-driven stylesheet is
+   sufficient at this scale and avoids an unjustified new dependency. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Visible focus is a security/accessibility requirement for an
+   administrative dashboard (docs/reception-dashboard-architecture.md §24)
+   — never suppressed with `outline: none` without a replacement. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

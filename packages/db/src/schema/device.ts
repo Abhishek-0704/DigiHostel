@@ -48,17 +48,15 @@ export const trustedDevices = pgTable(
     // `trusted_devices_insert_own` policy (WITH CHECK parent_id = caller
     // only) did not actually enforce that — it let any authenticated parent
     // self-insert a fully active device row with no attestation whatsoever,
-    // directly defeating `requireActiveTrustedDevice()`'s purpose. Device
-    // registration is not implemented yet (`registerCurrentDevice()` still
-    // throws `DeviceServiceNotImplementedError` — see
-    // src/services/devices/devices.ts), so there is no legitimate
-    // authenticated-client INSERT path to preserve today. Once a real,
-    // attestation-gated registration flow exists, it must write through the
-    // backend's own privileged connection (which bypasses RLS by design,
-    // exactly like `device_attestation_events`' insert path below), never
-    // through a client-facing RLS policy — RLS cannot itself verify a Play
-    // Integrity/App Attest result, so no `authenticated`-role INSERT policy
-    // on this table can ever be correct.
+    // directly defeating `requireActiveTrustedDevice()`'s purpose. A real,
+    // attestation-gated registration flow now exists (ADR-003 implementation
+    // — `apps/api/src/domain/device/`), and it writes through the backend's
+    // own privileged connection exactly as anticipated here (which bypasses
+    // RLS by design, exactly like `device_attestation_events`' insert path
+    // below), never through a client-facing RLS policy — RLS cannot itself
+    // verify a Play Integrity/App Attest result, so no `authenticated`-role
+    // INSERT policy on this table can ever be correct, regardless of what
+    // registration capability exists above the database layer.
     //
     // Self-revocation (below) is the only authenticated-client mutation
     // this table now permits, and it is restricted to the one-way
@@ -110,5 +108,52 @@ export const deviceAttestationEvents = pgTable(
       to: authenticatedRole,
       using: sql`exists (select 1 from ${trustedDevices} td where td.id = ${t.trustedDeviceId} and td.parent_id = ${callerParentId})`,
     }),
+  ],
+).enableRLS();
+
+// ADR-003 implementation — device-registration challenge/nonce storage.
+// Purely backend-internal: a client never reads or writes this table
+// directly (no policy grants any access to `authenticated` at all, matching
+// `audit_logs`' own "no client role, ever" pattern) — the client only ever
+// learns the nonce via the `POST /devices/challenge` HTTP response body, and
+// the backend's own privileged connection (bypasses RLS by design) is the
+// only writer, exactly like `device_attestation_events` above.
+//
+// Deliberately a distinct table from `trusted_devices`/`device_attestation_events`
+// rather than a "pending" sub-state on `trusted_devices`: a rejected/expired
+// challenge must never create a `trusted_devices` row at all (that table's
+// mere existence, revoked or not, currently has meaning elsewhere — e.g.
+// `isCurrentDevice` fingerprint matching), and `device_attestation_events`'s
+// `trusted_device_id` FK is NOT NULL, so it structurally cannot record a
+// pre-device-creation attempt. Failed/expired challenges are recorded in
+// `audit_logs` instead (action `device_attestation_rejected` /
+// `device_registration_challenge_expired`), never here or in
+// `device_attestation_events`.
+export const deviceRegistrationChallenges = pgTable(
+  "device_registration_challenges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    parentId: uuid("parent_id")
+      .notNull()
+      .references(() => parents.id),
+    platform: devicePlatform("platform").notNull(),
+    // Cryptographically random, base64url-encoded — bound into the Play
+    // Integrity/App Attest request itself so a token obtained for one
+    // challenge cannot be replayed against another (§6/§17 of the ADR-003
+    // implementation task).
+    nonce: text("nonce").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // Short-lived by policy (apps/api/src/config/deviceAttestation.ts) — a
+    // stale challenge must never be usable, per the fail-closed requirement.
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    // Set exactly once, on the single attempt to redeem this challenge
+    // (success OR failure) — enforces single-use regardless of outcome, so a
+    // rejected attestation cannot simply be retried against the same nonce.
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("drc_parent_id_idx").on(t.parentId),
+    index("drc_expires_at_idx").on(t.expiresAt),
+    // No pgPolicy entries at all — see the table-level comment above.
   ],
 ).enableRLS();

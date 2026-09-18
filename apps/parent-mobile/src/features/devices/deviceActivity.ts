@@ -15,13 +15,17 @@
  *   by design (`packages/db/src/schema/audit.ts`'s own comment: "Deliberately
  *   NO policies at all for any client role").
  * - `device_attestation_events` IS readable by the owning parent
- *   (`dae_select_own` — `packages/db/src/schema/device.ts`), but it only
+ *   (`dae_select_own` — `packages/db/src/schema/device.ts`), and — since the
+ *   ADR-003 implementation task — a real "pass" row is now written on every
+ *   successful Android device registration (`DrizzleTrustedDeviceRepository
+ *   .createTrustedDevice()`, `apps/api/src/domain/device/`). It still only
  *   ever records attestation pass/fail checks, not the general event types
- *   above — and since ADR-003 attestation is unimplemented (see
- *   docs/current-state.md's G-04), nothing has ever written a row to it
- *   either. Wiring up a real query against it would be technically real
- *   but would always return zero rows and would misrepresent a narrow,
- *   unrelated table as "the" activity feed.
+ *   above (biometric enabled/disabled, replaced, removed, authenticated,
+ *   session restored/expired, revoked) — so wiring up a real query against
+ *   it today would be technically real but would misrepresent one narrow
+ *   event type as "the" activity feed, not fabricate data. Building a genuine
+ *   multi-event-type activity timeline remains out of scope, unchanged by
+ *   the ADR-003 work.
  *
  * Neither table can honestly back the feature this section's name implies.
  * This is therefore an authoritative "unavailable" state, not a loading

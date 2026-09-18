@@ -1,0 +1,14 @@
+.wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--spacing-lg);
+  background: var(--color-background);
+}
+
+.card {
+  width: 100%;
+  max-width: 440px;
+  border-top: 3px solid var(--color-primary);
+}

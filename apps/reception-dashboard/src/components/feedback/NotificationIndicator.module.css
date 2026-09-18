@@ -1,0 +1,31 @@
+.button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--color-surface-variant);
+  color: var(--color-text-primary);
+}
+
+.badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: var(--color-error);
+  color: var(--color-on-error);
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+}

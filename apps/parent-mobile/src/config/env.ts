@@ -49,3 +49,21 @@ export function getEnv(): AppEnv {
     apiBaseUrl: requireEnvVar("EXPO_PUBLIC_API_BASE_URL"),
   };
 }
+
+/**
+ * ADR-003 implementation — the numeric Google Cloud project number linked to
+ * this app's Play Console registration, required by the Play Integrity
+ * Standard API request (`IntegrityTokenRequest.setCloudProjectNumber`). This
+ * is a public identifier, not a secret (same sensitivity class as a package
+ * name) — safe to inline via EXPO_PUBLIC_, unlike a service-role/API key.
+ *
+ * Deliberately a separate, OPTIONAL accessor rather than part of `getEnv()`:
+ * no Google Play Console project exists in any environment this app has run
+ * in yet (see the ADR-003 implementation report's "Remaining Limitations"),
+ * so treating it as required would break every OTHER feature that calls
+ * `getEnv()` too. `registerCurrentDevice()` is the only caller, and it must
+ * surface a clear, honest "not configured" failure — never fall back to
+ * skipping attestation. */
+export function getGoogleCloudProjectNumber(): string | null {
+  return process.env.EXPO_PUBLIC_GOOGLE_CLOUD_PROJECT_NUMBER ?? null;
+}

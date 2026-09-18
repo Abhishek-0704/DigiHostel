@@ -300,9 +300,21 @@ auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 max_enrolled_factors = 10
 
 # Control MFA via App Authenticator (TOTP)
+# Enabled per ADR-024 (ACCEPTED — Reception Dashboard staff auth is
+# password + mandatory native TOTP MFA). Was `false` (the Supabase CLI's
+# own scaffold default) until Prompt 3 (RBAC & Authorization Framework)
+# empirically discovered — by attempting a real local enrollment and
+# getting `mfa_totp_enroll_not_enabled` back — that TOTP MFA had never
+# actually been turned on in this project's local config, meaning ADR-024's
+# accepted mechanism could not yet function even in local development. See
+# docs/reception-dashboard-architecture-security-review.md's Prompt 3
+# addendum for the full finding, including the open question of whether
+# TOTP MFA is available on Supabase's Free tier in a real hosted project
+# (this file only controls the local CLI emulator, not any hosted
+# project's actual entitlement).
 [auth.mfa.totp]
-enroll_enabled = false
-verify_enabled = false
+enroll_enabled = true
+verify_enabled = true
 
 # Configure MFA via Phone Messaging
 [auth.mfa.phone]

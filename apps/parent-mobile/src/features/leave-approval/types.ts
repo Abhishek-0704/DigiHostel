@@ -39,24 +39,30 @@ export type LeaveApprovalUiState =
   | "expired"
   | "already_processed"
   | "cancelled"
+  | "not_yet_sent"
   | "unavailable"
   | "error";
 
 /**
  * A safe, coarse status vocabulary derived from the backend's real
  * `leave_request_status` enum. `"awaiting_response"` deliberately collapses
- * every pre-decision escalation stage (`pending`, `father_notified`,
+ * every stage a parent can actually decide on (`father_notified`,
  * `mother_notified`, `guardian_notified`, `in_app_call`,
- * `manual_verification` — `DECIDABLE_STATUSES`,
+ * `manual_verification` — `PARENT_DECIDABLE_STATUSES`,
  * `apps/api/src/domain/leave/types.ts`) into one value: which stage a
  * request is at is internal escalation detail this app must never surface
  * (the same principle already established for notifications —
  * `docs/notifications.md` §1's "never expose internal escalation details").
+ * `"not_yet_sent"` is `pending` on its own — Reception-Initiated Parent
+ * Approval correction: a `pending` request has not yet been sent for parent
+ * approval by Reception and is deliberately NOT actionable, so it must never
+ * collapse into `"awaiting_response"` (which this app's Pending Approvals
+ * list/Dashboard card/Leave Detail all treat as "the parent can act now").
  * `"unknown"` is a defensive fallback for a status value this presentation
  * layer doesn't recognize — never silently treated as any specific real
  * status. */
 export type LeaveApprovalPresentationStatus =
-  "awaiting_response" | "approved" | "rejected" | "expired" | "unknown";
+  "not_yet_sent" | "awaiting_response" | "approved" | "rejected" | "expired" | "unknown";
 
 export interface StudentPresentation {
   name: string | null;

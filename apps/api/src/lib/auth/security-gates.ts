@@ -1,25 +1,38 @@
 /**
  * Explicit interfaces for security gates that are NOT implemented yet:
- * device attestation and biometric freshness (ADR-003, ADR-014;
- * docs/auth-database-security-model.md §7-§8). Trusted-device *validation*
- * (is this device currently trusted, per `trusted_devices.revoked_at`) IS
- * real today — that's plain data already in Postgres, exposed via
- * `AuthDbPort.hasActiveTrustedDevice` (db-port.ts) and wired into a real
- * guard (guards.ts's `requireActiveTrustedDevice`). Attestation and
- * biometric freshness require integrating actual providers (Play Integrity,
- * App Attest/DeviceCheck, an on-device biometric SDK) which this task
- * explicitly excludes (constraint #11) — these interfaces exist so route
- * authorization can be wired against them later WITHOUT rewriting the
- * guard/route structure, not to fake a result today.
+ * post-creation device re-attestation and biometric freshness (ADR-003,
+ * ADR-014; docs/auth-database-security-model.md §7-§8). Trusted-device
+ * *validation* (is this device currently trusted, per
+ * `trusted_devices.revoked_at`) IS real today — that's plain data already in
+ * Postgres, exposed via `AuthDbPort.hasActiveTrustedDevice` (db-port.ts) and
+ * wired into a real guard (guards.ts's `requireActiveTrustedDevice`).
+ *
+ * `DeviceAttestationGate` below is specifically about re-checking an
+ * ALREADY-trusted device's attestation after the fact (`checkAttestation
+ * (trustedDeviceId)`) — a distinct, still-unbuilt capability, not to be
+ * confused with *registration-time* attestation. That flow (a device
+ * proving itself via Play Integrity before it is ever marked trusted) is now
+ * real: see `apps/api/src/domain/device/` (`AttestationVerifier`,
+ * `PlayIntegrityVerifier`, `DeviceRegistrationService`) and the ADR-003
+ * implementation report. A separate interface was deliberately created for
+ * that flow rather than reusing this one, since `checkAttestation`'s
+ * `trustedDeviceId` parameter presupposes a device that already exists,
+ * which doesn't fit a registration-time check. Biometric freshness remains
+ * genuinely unimplemented in both senses — see
+ * `AssertionPresenceBiometricFreshnessGate`'s own doc comment below for its
+ * current, explicitly non-cryptographic placeholder.
  *
  * `NotImplementedAttestationGate` / `NotImplementedBiometricFreshnessGate`
- * are the only production-registered implementations right now, and they
- * throw rather than silently returning success — a route that calls them
- * before the real integration exists fails loudly, which is the correct,
- * honest behavior (never claim production verification exists when it
- * doesn't). Test doubles that return deterministic pass/fail results live
- * in the corresponding *.test.ts files, not here — keeping "code that could
- * silently look production-ready" out of src/.
+ * are the only production-registered implementations of their interfaces
+ * right now (neither is wired into any route — `NotImplementedAttestationGate`
+ * remains unused scaffolding for the future re-attestation capability
+ * described above), and they throw rather than silently returning success —
+ * a route that calls them before the real integration exists fails loudly,
+ * which is the correct, honest behavior (never claim production
+ * verification exists when it doesn't). Test doubles that return
+ * deterministic pass/fail results live in the corresponding *.test.ts files,
+ * not here — keeping "code that could silently look production-ready" out
+ * of src/.
  */
 
 export interface DeviceAttestationResult {

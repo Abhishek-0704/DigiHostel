@@ -52,3 +52,29 @@ export const isHostelAdminForStudent = (studentId: AnyPgColumn | SQL) =>
 // than an inline subquery.
 export const isReceptionForStudent = (studentId: AnyPgColumn | SQL) =>
   sql`public.is_reception_for_student(${studentId})`;
+
+// QG-03 remediation, F-QG03-01: `parents` has no hostel_id column of its own
+// AND no direct student_id column — a parent's hostel relevance is only
+// derivable by joining through parent_student_relationships -> students.
+// `parents_all_hostel_admin` previously used a bare `isHostelAdmin` role
+// check (no scoping at all — the original, unfixed-since-migration-0000
+// defect QG-03 found live: a cross-hostel hostel_admin could read AND write
+// every parent record system-wide). A parent CAN legitimately be linked to
+// students in more than one hostel (the schema places no such constraint on
+// parent_student_relationships) — this helper's EXISTS semantics correctly
+// allow EITHER hostel's hostel_admin to see/manage such a parent (mirroring
+// parent_student_relationships' own existing psr_all_hostel_admin behavior,
+// which already grants each hostel's admin access to the relationship row
+// for their own hostel's student regardless of the parent's other links),
+// while still denying a hostel_admin with NO linked student at all.
+export const isHostelAdminForParent = (parentId: AnyPgColumn | SQL) =>
+  sql`public.is_hostel_admin_for_parent(${parentId})`;
+
+// QG-03 remediation, F-QG03-02: qr_sessions/journey_events (dormant Library
+// schema) reference a library_pass, not a student directly — a reception
+// staff member's hostel relevance is only derivable by joining through
+// library_passes -> students. Mirrors isReceptionForStudent's exact shape,
+// one join-hop further. library_incharge remains intentionally GLOBAL
+// (unchanged) — only reception_warden's access is scoped by this helper.
+export const isReceptionForLibraryPass = (libraryPassId: AnyPgColumn | SQL) =>
+  sql`public.is_reception_for_library_pass(${libraryPassId})`;

@@ -1,0 +1,104 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg);
+}
+
+.heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.metaList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+}
+
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  font-size: 13px;
+}
+
+.metaRow dt {
+  color: var(--color-text-secondary);
+}
+
+.metaRow dd {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.unavailableNote {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: var(--spacing-sm) 0 0 0;
+}
+
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checklistItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.checklistItemHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.checklistLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.checklistDetail {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.formError {
+  margin: 0;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+.successBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 13px;
+  color: var(--color-text-primary);
+}

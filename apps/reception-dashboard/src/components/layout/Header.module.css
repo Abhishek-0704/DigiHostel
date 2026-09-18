@@ -1,0 +1,88 @@
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  height: 56px;
+  padding: 0 var(--spacing-lg);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.menuButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  padding: var(--spacing-xs);
+  border-radius: var(--radius-sm);
+}
+
+.menuButton:hover {
+  background: var(--color-surface-variant);
+}
+
+.title {
+  font-weight: 700;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--color-surface-variant);
+  color: var(--color-text-primary);
+}
+
+.iconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.iconButton:disabled:hover {
+  background: transparent;
+}
+
+/* Below this width the search placeholder is dropped first — it carries
+   no functionality yet, so it's the least valuable use of limited header
+   space (§21 — desktop usability is never compromised for mobile; the
+   inverse trade-off, dropping decorative-for-now controls on narrow
+   viewports, is the correct direction). */
+@media (max-width: 720px) {
+  .header {
+    gap: var(--spacing-sm);
+    padding: 0 var(--spacing-md);
+  }
+
+  .searchButton {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .title {
+    display: none;
+  }
+}

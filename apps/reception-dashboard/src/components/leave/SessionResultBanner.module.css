@@ -1,0 +1,27 @@
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+}
+
+.icon {
+  font-size: 18px;
+}
+
+.success {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+
+.error {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
+.warning {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
