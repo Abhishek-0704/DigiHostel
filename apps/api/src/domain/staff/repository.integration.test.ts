@@ -464,7 +464,10 @@ describe.skipIf(!RUN)("DrizzleStaffRepository (real Postgres integration)", () =
         .select({ id: auditLogsTable.id })
         .from(auditLogsTable)
         .where(
-          and(eq(auditLogsTable.entityId, RECEPTION1_STAFF_ID), eq(auditLogsTable.action, "staff.force_signed_out")),
+          and(
+            eq(auditLogsTable.entityId, RECEPTION1_STAFF_ID),
+            eq(auditLogsTable.action, "staff.force_signed_out"),
+          ),
         );
 
       const outcome = await repo.forceSignOut({
@@ -477,7 +480,10 @@ describe.skipIf(!RUN)("DrizzleStaffRepository (real Postgres integration)", () =
         .select({ id: auditLogsTable.id })
         .from(auditLogsTable)
         .where(
-          and(eq(auditLogsTable.entityId, RECEPTION1_STAFF_ID), eq(auditLogsTable.action, "staff.force_signed_out")),
+          and(
+            eq(auditLogsTable.entityId, RECEPTION1_STAFF_ID),
+            eq(auditLogsTable.action, "staff.force_signed_out"),
+          ),
         );
       expect(after.length).toBe(before.length + 1);
 
@@ -584,10 +590,7 @@ describe.skipIf(!RUN)("DrizzleStaffRepository (real Postgres integration)", () =
       } finally {
         // Cleanup: restore the seeded super_admin and remove both race
         // fixtures, regardless of how the race resolved.
-        await db
-          .update(staff)
-          .set({ status: "active" })
-          .where(eq(staff.id, SUPER_ADMIN_STAFF_ID));
+        await db.update(staff).set({ status: "active" }).where(eq(staff.id, SUPER_ADMIN_STAFF_ID));
         await db.delete(staff).where(inArray(staff.id, [admin1Id, admin2Id]));
         await identityAdmin.cleanupAll();
       }
