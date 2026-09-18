@@ -46,8 +46,9 @@ Both decision endpoints require a `biometricAssertion` in the request body and r
 
 - `GET /api/v1/staff`, `GET /api/v1/staff/statistics`, `GET /api/v1/staff/{staffId}` — the staff directory and its statistics.
 - `POST /api/v1/staff` — provisions a new staff account via the Supabase Auth Admin API (invite email, no password ever generated/stored/returned by this backend).
-- `PATCH /api/v1/staff/{staffId}/role`, `/hostel`, `/status` — role change, hostel reassignment, suspend/reactivate. Every mutation refuses to target the caller's own staff id (`403`) and refuses to leave zero active `super_admin`s (`409`).
-- `POST /api/v1/staff/{staffId}/reset-password`, `/force-sign-out` — triggers Supabase Auth's own recovery email / revokes every active session via the Admin API.
+- `PATCH /api/v1/staff/{staffId}/role`, `/hostel`, `/status` — role change, hostel reassignment, suspend/reactivate. Every mutation refuses to target the caller's own staff id (`403`) and refuses to leave zero active `super_admin`s (`409`) — genuinely concurrency-safe as of the QG-04 remediation (F-QG04-01): the invariant is re-checked under a real Postgres row lock inside the mutating transaction, not merely a pre-transaction count, proven against a real concurrent race (`docs/qg04-remediation.md`).
+- `POST /api/v1/staff/{staffId}/reset-password` — triggers Supabase Auth's own recovery email via the Admin API.
+- `POST /api/v1/staff/{staffId}/force-sign-out` — **not** an Admin API call (QG-04 remediation, F-QG04-02: the Admin API has no user-id-keyed "revoke every session" capability at all in the installed SDK — the original implementation was completely non-functional, live-reproduced as a raw `500`). Sets `staff.sessions_invalidated_before` to `now()`, enforced on every subsequent authenticated request by comparing it against the presented JWT's own `iat` claim — an already-issued session is rejected `401` on its next request; a genuinely new session obtained afterward is unaffected. See `docs/qg04-remediation.md` for the full root-cause/fix/verification record.
 
 See `apps/reception-dashboard/docs/identity-admin.md` for the full design, including which capabilities (custom roles, per-user permissions, session listing, MFA reset, multi-hostel assignment) were deliberately deferred rather than built.
 
