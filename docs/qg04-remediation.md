@@ -157,7 +157,7 @@ Supabase Auth (genuine password + TOTP-enrolled AAL2 sessions, no mocks).
 
 ## F-QG04-03 — Real Supabase Admin API integration coverage (MAJOR)
 
-**Status: PARTIALLY ADDRESSED**
+**Status: PARTIALLY ADDRESSED** (as of this remediation — see the QG-05/F-QG05-04 update below for the closure of the residual gap this section originally left open)
 
 | Capability | Real boundary exercised this remediation | Permanent automated real-boundary test | Classification |
 |---|---|---|---|
@@ -169,6 +169,50 @@ Closing the residual gap for `inviteStaffUser`/`resetPassword` with a
 permanent, CI-enforced test against the real Admin API remains open,
 tracked but not implemented here, per the instruction not to opportunistically
 expand this remediation's scope beyond the confirmed findings.
+
+**Update (QG-05 remediation, F-QG05-04, closed the same day as F-QG05-03):**
+the residual gap this section names is now closed. A new, permanent,
+real-boundary integration suite
+(`apps/api/src/domain/staff/identityAdminBoundary.integration.test.ts`)
+exercises the real `SupabaseStaffIdentityAdmin` class against the real
+local Supabase Auth Admin API — `inviteUserByEmail` (through the real
+`POST /staff` HTTP route, verified against a genuinely created `auth.users`
+row, correct `staff` linkage, the expected `staff.created` audit row, and
+real email evidence via the local Supabase stack's Mailpit capture sink)
+and `resetPasswordForEmail` (through the real `POST /staff/{id}/reset-password`
+route, verified against the expected `staff.password_reset_triggered`
+audit row and real Mailpit evidence). A genuine, real Admin API rejection
+was also reproduced and tested (inviting an email that is already a
+*confirmed* identity) — notably, this investigation found
+`inviteUserByEmail` is NOT a strict "reject on any existing email" call: a
+second invite to the same still-*pending* (never confirmed) address is
+idempotent, not an error, which the original F-QG04-03 assumption did not
+anticipate. See that test file's own header comment and Step 4's final
+report for the full evidence trail. `resetPassword`/`sendPasswordResetEmail`
+is therefore no longer "Unverified" — both capabilities now have permanent
+real-boundary coverage, gated on `DATABASE_URL`/`SUPABASE_URL`/
+`SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` being available (identical
+convention to every other real-Postgres integration test in this
+repository).
+
+**Update (QG-05 closure, CI Boundary Automation):** this suite, and
+`forceSignOutEnforcement.integration.test.ts` (F-QG05-03), are now committed
+to version control and **are executed in CI** — `.github/workflows/ci.yml`'s
+`verify` job now forwards `SUPABASE_SERVICE_ROLE_KEY` (produced by the
+existing `supabase status -o env` step, alongside `DATABASE_URL`/
+`SUPABASE_URL`/`SUPABASE_ANON_KEY`, which were already forwarded) into the
+`pnpm exec vitest run` step's environment. Before this change, all four
+gating variables were never simultaneously present in CI, so both suites
+silently skipped (`describe.skipIf(!HAS_REAL_SUPABASE_AUTH)`) on every CI
+run to date — the coverage existed locally but had never once executed in
+the pipeline. Real Supabase Auth Admin API boundary integration tests for
+staff invitation and password-reset initiation, and the real Force
+Sign-Out enforcement regression test, are executed by CI against CI's own
+ephemeral local Supabase instance (started fresh by `supabase start` in
+the same job) on every push and pull request. No GitHub Actions secret was
+required for this — `SUPABASE_SERVICE_ROLE_KEY` here is the Supabase CLI's
+well-known local demo key, not a project credential, so there is no
+fork-PR secret-exposure concern.
 
 ---
 
