@@ -48,3 +48,6 @@ Thumbs.db
 # logs
 npm-debug.log
 yarn-error.log
+
+.vercel
+.env*
