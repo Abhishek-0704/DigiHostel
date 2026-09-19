@@ -71,12 +71,28 @@ jobs:
         # just in the format $GITHUB_ENV actually expects.
         run: supabase status -o env | sed -E 's/^([A-Za-z_][A-Za-z0-9_]*)="(.*)"$/\1=\2/' >> "$GITHUB_ENV"
 
-      - name: Run test suite (unit + real-Postgres integration, DATABASE_URL/SUPABASE_URL/SUPABASE_ANON_KEY set from the step above)
+      - name: Run test suite (unit + real-Postgres integration + real-Supabase-Auth boundary tests; DATABASE_URL/SUPABASE_URL/SUPABASE_ANON_KEY/SUPABASE_SERVICE_ROLE_KEY set from the step above)
+        # QG-05 (F-QG05-04) closure: SUPABASE_SERVICE_ROLE_KEY is the last of
+        # the four env vars forceSignOutEnforcement.integration.test.ts and
+        # identityAdminBoundary.integration.test.ts gate on
+        # (HAS_REAL_SUPABASE_AUTH). It was already being produced by the
+        # "Export local Supabase connection details" step above (as
+        # SERVICE_ROLE_KEY) exactly like DB_URL/API_URL/ANON_KEY, but was
+        # never forwarded into this step's env block, so those two real
+        # Supabase Auth Admin API boundary suites silently skipped on every
+        # CI run to date. This is the CI job's own ephemeral local Supabase
+        # instance (started fresh by `supabase start` above, torn down at
+        # the end of the job) — SERVICE_ROLE_KEY here is the Supabase CLI's
+        # well-known, publicly-documented local demo key (identical on every
+        # `supabase start` anywhere), never a project secret, so this
+        # requires no GitHub Actions secret and carries no fork-PR exposure
+        # risk.
         run: pnpm exec vitest run
         env:
           DATABASE_URL: ${{ env.DB_URL }}
           SUPABASE_URL: ${{ env.API_URL }}
           SUPABASE_ANON_KEY: ${{ env.ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SERVICE_ROLE_KEY }}
 
       - name: Build
         run: pnpm run build
