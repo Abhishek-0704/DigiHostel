@@ -102,7 +102,16 @@ jobs:
     needs: verify
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    environment: production
+    # QG-06 remediation (environment-labeling honesty): this job has always
+    # deployed to the Render service actually named `digihostel-api-staging`
+    # (confirmed live — RENDER_DEPLOY_HOOK_URL is a repo-level secret, so
+    # this relabel from the previous `production` has zero behavioral
+    # effect, only correcting which GitHub Environment's deployment history
+    # this activity is attributed to). This job does NOT deploy to a
+    # genuinely separate production service — none is provisioned yet (see
+    # docs/runbooks/production-deployment.md and the QG-06 remediation
+    # reports). Do not treat this job's success as production deployment.
+    environment: staging
     steps:
       # ADR-021 + F-06 Phase 3 — apps/api deploys to a persistent-process
       # host (selected: Render; see docs/runbooks/production-deployment.md
