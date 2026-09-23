@@ -1,0 +1,168 @@
+name: Deploy Production
+
+# QG-06 remediation (F-QG06-11) — the controlled, repeatable, auditable
+# production release path this repository previously lacked. Production
+# infrastructure (Render service digihostel-api-production, Supabase project
+# asphlfoikqyaeslmhrah) was provisioned and first deployed via one-off manual
+# Render/Supabase API calls during QG-06 remediation; this workflow replaces
+# those manual, workstation-specific steps with a repository-defined
+# procedure any authorized engineer (or future CI actor) can run identically.
+#
+# Deliberately workflow_dispatch-only, not push-triggered. Unlike staging
+# (ci.yml's `deploy-api` job, which deploys on every push to main), neither
+# ADR-013 nor ADR-021 mandates an automatic production trigger — ADR-021's
+# own "Migration / Implementation Impact" section explicitly defers the
+# production deployment mechanism to "a future, narrowly-scoped task" without
+# specifying push-to-deploy. Given that silence, this workflow follows the
+# safer default: a maintainer deliberately dispatches a release once a
+# specific, already-merged, already-CI-verified commit on `main` is judged
+# ready for production, rather than every push to `main` silently reaching
+# real users.
+#
+# Sequencing preserves ADR-013's single-authoritative-migration-mechanism
+# requirement: migrations run first, via the exact same, unmodified
+# deploy-migrations.yml workflow (invoked as a reusable workflow via
+# `workflow_call`, not duplicated into a second implementation) — if that
+# fails, the API deployment job never runs, and this workflow never claims
+# success. No second migration mechanism is introduced.
+#
+# Restricted to the `main` branch at the job level, not merely by
+# convention: GitHub's workflow_dispatch UI/API allows selecting an
+# arbitrary ref to run a workflow against. The `guard` job below rejects any
+# ref other than `refs/heads/main` before any downstream job (migration,
+# deploy, or verification) can run, so this workflow cannot be used to push
+# an unreviewed branch to production.
+#
+# Render's public API does not expose or allow creating a deploy hook URL
+# (confirmed empirically — GET /v1/services/{id} never returns one, for
+# either the existing staging service or this one); the only available
+# trigger mechanism is POST /v1/services/{id}/deploys, authenticated with a
+# Render account/workspace-scoped API key. This is broader than strictly
+# necessary (Render has no service-scoped token type to narrow it further —
+# a platform limitation, not a choice made here), documented honestly in
+# docs/runbooks/production-deployment.md rather than overstated as
+# least-privilege. The production Render service id is hardcoded below
+# (not a secret, not a workflow input) so the deployment target is fixed,
+# auditable in this file's own git history, and cannot be redirected by
+# manipulating a secret or a dispatch parameter.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  RENDER_PRODUCTION_SERVICE_ID: srv-daq145mk1f9s73dj3oeg
+  PRODUCTION_API_URL: https://digihostel-api-production.onrender.com
+
+jobs:
+  guard:
+    name: Validate release context
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject dispatch from any ref other than main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::This workflow may only be dispatched from main (got ${{ github.ref }}). Refusing to deploy an unreviewed ref to production."
+          exit 1
+
+  migrate:
+    name: Apply production migrations
+    needs: guard
+    uses: ./.github/workflows/deploy-migrations.yml
+    secrets: inherit
+
+  deploy-api:
+    name: Deploy apps/api to production
+    needs: migrate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger Render production deploy
+        id: trigger
+        run: |
+          RESPONSE=$(curl -sS -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            "https://api.render.com/v1/services/$RENDER_PRODUCTION_SERVICE_ID/deploys")
+          DEPLOY_ID=$(node -e "
+            let d = process.argv[1];
+            try {
+              const parsed = JSON.parse(d);
+              if (!parsed.id) throw new Error('no id field');
+              console.log(parsed.id);
+            } catch (e) {
+              console.error('Unexpected Render response: ' + d);
+              process.exit(1);
+            }
+          " "$RESPONSE")
+          echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+
+      - name: Wait for deploy to go live
+        run: |
+          for i in $(seq 1 40); do
+            STATUS=$(curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_PRODUCTION_SERVICE_ID/deploys/${{ steps.trigger.outputs.deploy_id }}" \
+              | node -e "
+                let d='';
+                process.stdin.on('data', c => d += c);
+                process.stdin.on('end', () => {
+                  try { console.log(JSON.parse(d).status); }
+                  catch (e) { console.log('parse-error'); }
+                });
+              ")
+            echo "[$i] status: $STATUS"
+            if [ "$STATUS" = "live" ]; then
+              exit 0
+            fi
+            if [ "$STATUS" = "build_failed" ] || [ "$STATUS" = "update_failed" ] || [ "$STATUS" = "canceled" ] || [ "$STATUS" = "deactivated" ]; then
+              echo "::error::Render deploy ${{ steps.trigger.outputs.deploy_id }} ended in status: $STATUS"
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "::error::Timed out waiting for Render deploy ${{ steps.trigger.outputs.deploy_id }} to go live."
+          exit 1
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+
+  verify:
+    name: Verify production health and provenance
+    needs: deploy-api
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check /healthz reports the intended commit
+        run: |
+          BODY=$(curl -sS -m 60 --retry 5 --retry-delay 10 --retry-all-errors "$PRODUCTION_API_URL/api/v1/healthz")
+          echo "healthz: $BODY"
+          VERSION=$(node -e "
+            let d = process.argv[1];
+            try { console.log(JSON.parse(d).version || ''); }
+            catch (e) { console.log(''); }
+          " "$BODY")
+          if [ "$VERSION" != "${{ github.sha }}" ]; then
+            echo "::error::Deployed version ($VERSION) does not match the commit this workflow ran against (${{ github.sha }})."
+            exit 1
+          fi
+          echo "Provenance confirmed: production is running ${{ github.sha }}"
+
+      - name: Check /readyz (database connectivity)
+        run: |
+          BODY=$(curl -sS -m 30 "$PRODUCTION_API_URL/api/v1/readyz")
+          echo "readyz: $BODY"
+          STATUS=$(node -e "
+            let d = process.argv[1];
+            try { console.log(JSON.parse(d).status || ''); }
+            catch (e) { console.log(''); }
+          " "$BODY")
+          if [ "$STATUS" != "ok" ]; then
+            echo "::error::/readyz did not report ok (database connectivity check failed)."
+            exit 1
+          fi

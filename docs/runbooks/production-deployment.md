@@ -19,18 +19,37 @@ own required convention:
   verified locally (including, where noted, inside a real Linux container),
   but has not been deployed to any external environment.
 - **DEPLOYED TO STAGING** / **DEPLOYED TO PRODUCTION** — actually running on
-  a real external environment. Neither applies anywhere in this document —
-  no staging or production environment exists yet (see §6).
+  a real external environment.
+
+**Update (QG-06 production infrastructure + F-QG06-11 remediation, 2026-09-23/24).**
+The "no staging or production environment exists yet" framing above is now
+historical, not current. Real, separate production infrastructure exists and
+is live: Vercel Production (`digihostel-reception-dashboard.vercel.app`) →
+Render Production (`digihostel-api-production`, service id
+`srv-daq145mk1f9s73dj3oeg`) → Supabase Production (`asphlfoikqyaeslmhrah`,
+`ap-southeast-2`). All 26 committed migrations are applied, 27/27 public
+tables have RLS enabled, and the `supabase_realtime` publication is
+populated identically to staging. **DEPLOYED TO PRODUCTION now applies** to
+the current `apps/api`/`apps/reception-dashboard` revision as of commit
+`75dcc49d7a14c5209661db293882b10b062ae451`. A repeatable, repository-defined
+CI deployment workflow (`.github/workflows/deploy-production.yml`) now
+exists closing F-QG06-11 — see the updated §9/§13/§14/§15/§18 below. Two
+items from the original audit remain genuinely unresolved and are **not**
+addressed by this update: production PITR/backups (F-QG06-01, an
+account-owner billing decision) and a production administrator account
+(F-QG06-09, an account-owner action per this project's standing prohibition
+on autonomous account creation).
 
 ## 1. Prerequisites
 
 - GitHub repository access with permission to configure Actions secrets and
   branch protection (`EXTERNAL PREREQUISITE` for anyone other than the repo
   owner — see §6 "GitHub" for this repo's current actual state).
-- A production Supabase project (`EXTERNAL PREREQUISITE` — none exists for
-  DigiHostel today; see §2 and `docs/runbooks/disaster-recovery.md` §3).
-- A Render account/service for `apps/api` (§3) — `EXTERNAL PREREQUISITE`;
-  `render.yaml` exists but no service has been created from it.
+- A production Supabase project — **satisfied** (`asphlfoikqyaeslmhrah`,
+  2026-09-23/24; see the top-of-file update note and §9/§13).
+- A Render account/service for `apps/api` (§3) — **satisfied**
+  (`digihostel-api-production`, `srv-daq145mk1f9s73dj3oeg`; created via a
+  direct API call, not `render.yaml`'s Blueprint flow — see §9).
 - An Expo/EAS account and project (`EXTERNAL PREREQUISITE`).
 
 ## 2. Environment Model
@@ -60,8 +79,9 @@ LOCAL  →  CI (GitHub Actions, every PR)  →  STAGING  →  PRODUCTION
   for mobile. **NOT IMPLEMENTED** — no staging Supabase project or API
   staging deployment exists yet; this remains a recommendation, not
   something provisioned by any task so far.
-- **PRODUCTION**: `EXTERNAL PREREQUISITE` end to end — no production
-  Supabase project, Render service, or EAS production build exists.
+- **PRODUCTION**: Supabase project and Render service now exist and are
+  live (2026-09-23/24 — see the top-of-file update note); EAS production
+  build remains `EXTERNAL PREREQUISITE`, unaffected by this update.
 
 **ARCHITECTURE DECIDED (ADR-021, F-06A, 2026-09-06); a concrete hosting
 target has since been implemented in the repository (F-06, same day):**
@@ -490,16 +510,44 @@ successful, to remove the now-redundant second path entirely.
 
 ## 9. Production Deployment
 
-**EXTERNAL PREREQUISITE** — the API-hosting architecture and concrete
-vendor are now decided (ADR-021, §2, §3), and the deployable artifact is
-built and verified (§11), but no Render service has been provisioned. Once
-it is, the intended flow is:
+**DEPLOYED TO PRODUCTION (QG-06 / F-QG06-11 remediation, 2026-09-23/24).**
+The API-hosting architecture (ADR-021, §2, §3) is decided, the Render
+service exists (`digihostel-api-production`), and a repeatable,
+repository-defined release workflow now exists:
+`.github/workflows/deploy-production.yml`.
 
 ```
-PR → CI validates → merge to main → deploy-migrations.yml applies migrations
-   → ci.yml's deploy-api job triggers Render's Deploy Hook → Render builds
-   apps/api/Dockerfile and deploys it → health check (/api/v1/healthz)
+PR → CI validates ("Verify") → merge to main
+   → maintainer deliberately dispatches "Deploy Production"
+       (workflow_dispatch only — production does NOT auto-deploy on push,
+       unlike staging; see the workflow file's own header comment for why)
+   → guard job rejects any ref other than main
+   → migrate job (reuses deploy-migrations.yml as a workflow_call — the
+       exact same migration mechanism §10 describes, not a second one)
+   → deploy-api job (needs: migrate) triggers a real Render deploy via the
+       Render API (POST /v1/services/{id}/deploys — Render exposes no
+       deploy-hook-URL retrieval via API, confirmed empirically, so this
+       uses an account-scoped RENDER_API_KEY stored only on the `production`
+       GitHub environment) and polls until the deploy reaches `live` or
+       fails
+   → verify job checks /api/v1/healthz's `version` field against the exact
+       commit SHA this workflow ran against, and /api/v1/readyz for
+       database connectivity — the workflow fails if either check fails
 ```
+
+This differs from staging's flow (`ci.yml`'s `deploy-api` job, which
+auto-deploys on every push to `main`) deliberately: neither ADR-013 nor
+ADR-021 mandates an automatic production trigger, and a controlled,
+deliberate promotion step was judged the safer default for real user
+traffic. See the workflow file itself for the full rationale.
+
+**First live execution**: production was originally stood up via one-off
+manual Render/Supabase API calls during QG-06 remediation (deploy
+`dep-daq2qj8473hc73eb15k0`, commit `75dcc49...`) — this workflow is the
+repeatable replacement for that manual procedure, not yet itself exercised
+end-to-end at the time this section was written (see the F-QG06-11
+remediation report for live-execution evidence, added once a real dispatch
+has been observed to succeed).
 
 ## 10. Database Migration Deployment
 
@@ -726,19 +774,26 @@ the code that consumes them, not assumed):
 
 | Secret | Used by | Status |
 |---|---|---|
-| `SUPABASE_ACCESS_TOKEN` | `deploy-migrations.yml` (CLI auth) | Not yet created — needs a production Supabase project first |
-| `SUPABASE_PROJECT_ID` | `deploy-migrations.yml` (`supabase link`) | Not yet created |
-| `SUPABASE_DB_PASSWORD` | `deploy-migrations.yml` (`supabase link`) | Not yet created |
-| `RENDER_DEPLOY_HOOK_URL` | `ci.yml`'s `deploy-api` job | Not yet created — needs a Render service to exist first |
-| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | `apps/api` runtime (auth boundary, OTP broker) | Production values not yet created; local dev value is Supabase's own well-known local fixed demo key (not a real secret) |
-| `DATABASE_URL` | `apps/api` runtime (Drizzle, pg-boss) | Production value not yet created |
-| `BUILD_SHA` | `apps/api` runtime (`/healthz`'s `version` field) | Not a secret; `render.yaml` maps it from Render's own `RENDER_GIT_COMMIT` automatically once a service exists |
-| `EXPO_ACCESS_TOKEN` | `apps/api`'s `ExpoPushSender` (optional — push notifications) | Not yet created; no real push tokens exist anywhere in this repository today (`docs/current-state.md`) |
-| EAS credentials/token | Mobile release | Not yet created |
+| `SUPABASE_ACCESS_TOKEN` | `deploy-migrations.yml` (CLI auth), `production` GH environment | **Created** — scoped to the account owning `asphlfoikqyaeslmhrah` |
+| `SUPABASE_PROJECT_ID` | `deploy-migrations.yml` (`supabase link`), `production` GH environment | **Created** — `asphlfoikqyaeslmhrah` |
+| `SUPABASE_DB_PASSWORD` | `deploy-migrations.yml` (`supabase link`), `production` GH environment | **Created** |
+| `RENDER_API_KEY` | `deploy-production.yml`'s `deploy-api` job, `production` GH environment | **Created** (2026-09-24, F-QG06-11). Account/workspace-scoped, not service-scoped — Render's API has no finer-grained token type; the workflow itself hardcodes the target service id so its *behavior* is constrained even though the credential's *capability* is broader. Documented honestly, not overstated as least-privilege. |
+| `RENDER_DEPLOY_HOOK_URL` | `ci.yml`'s `deploy-api` job (staging only) | Created (staging), repo-level — unaffected by this update |
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | `apps/api` runtime (auth boundary, OTP broker), set directly on the Render production service (not a GitHub secret — these are runtime env vars for the already-running service) | **Created** — production values point at `asphlfoikqyaeslmhrah`, verified distinct from staging's `lhonrqjmlhlehpbxvrag` values |
+| `DATABASE_URL` | `apps/api` runtime (Drizzle, pg-boss), Render production env var | **Created** — Supavisor session-pooler connection string (direct `db.<ref>.supabase.co:5432` connections are IPv6-only/require a paid add-on; the pooler works over IPv4, which Render's outbound network uses) |
+| `BUILD_SHA` / `RENDER_GIT_COMMIT` | `apps/api` runtime (`/healthz`'s `version` field) | Not a secret; Render injects `RENDER_GIT_COMMIT` automatically into every container — **verified live**, `/healthz.version` on production correctly reports the deployed commit SHA |
+| `EXPO_ACCESS_TOKEN` | `apps/api`'s `ExpoPushSender` (optional — push notifications) | Not yet created; no real push tokens exist anywhere in this repository today (`docs/current-state.md`) — unaffected by this update |
+| EAS credentials/token | Mobile release | Not yet created — unaffected by this update |
 
-No secret is committed anywhere in this repository (§16). This task created
-no placeholder secret values, and added no secret to any workflow file or
-`render.yaml` except via `${{ secrets.* }}`/`sync: false` references.
+No secret value has been committed, printed, or logged anywhere in this
+repository or in any tool output produced while creating them (F-QG06-11
+remediation). Production credentials are stored locally, outside this
+repository entirely, for the operator's own reuse — never inside
+`C:\DigiHostel`. `render.yaml`'s `sync: false` entries remain accurate for
+the fields it declares; production's actual values were set directly via
+the Render API/dashboard against the already-created service, not through
+a Blueprint sync (the Blueprint was never applied — the production service
+was created via a direct API call, see §9).
 
 ## 14. Health Verification
 
@@ -753,19 +808,30 @@ no placeholder secret values, and added no secret to any workflow file or
   platform's own restart gate — a DB-touching check is a worse choice for
   that role, since a brief DB blip would otherwise cause an unnecessary
   container restart.
-- No automated post-deploy health-check *workflow step* exists yet
-  (`NOT IMPLEMENTED`) — Render's own platform-level health check (§3) is
-  the mechanism that exists today; a GitHub Actions step that additionally
-  polls `/readyz` after a deploy could be added once a real service exists
-  to poll.
+- **An automated post-deploy health-check workflow step now exists**
+  (F-QG06-11, 2026-09-24) — `deploy-production.yml`'s `verify` job polls
+  both `/healthz` (asserting the `version` field matches the exact commit
+  the workflow ran against — real provenance verification, not just a `200`
+  check) and `/readyz` (database connectivity) after every production
+  deploy, and fails the workflow if either check fails. Render's own
+  platform-level health check (§3) remains the independent, always-on
+  restart gate; this workflow step is the release-time provenance/readiness
+  gate, a distinct concern.
 
 ## 15. Rollback
 
 ### Application rollback
 
 - **Render**: instant-rollback-to-previous-deploy is a native platform
-  feature — `CONFIGURED BUT UNVERIFIED` (no service exists yet to exercise
-  it against).
+  feature (redeploy an earlier `dep-*` id via `POST
+  /v1/services/{id}/deploys/{deployId}/rollback` or the dashboard) —
+  `CONFIGURED BUT UNVERIFIED`. The production service now exists, but as of
+  this writing it has had only one real deploy of a distinct commit, so a
+  rollback-to-a-different-commit test would have nothing meaningful to roll
+  back to; exercising this for real is deferred to the first time a genuine
+  second production release happens, rather than performed here as a
+  no-op that would prove nothing (per this task's own "do not fabricate a
+  meaningless test" instruction).
 - **Git-level**: `git revert` + redeploy is the fallback for any host,
   always available regardless of hosting decision.
 - **Mobile (EAS)**: EAS supports republishing a previous build/update
@@ -813,35 +879,68 @@ name a specific approver for the `production` GitHub Actions environment
 specific person is a decision for the repository owner, not something to
 invent.
 
-## 18. Recommended Repository Settings (not applied by this task)
+## 18. Recommended Repository Settings
 
-Documented precisely, per this task's own fallback instruction — not applied
-via the GitHub API even though technically possible with the authenticated
-session used for this audit, because it is a live change to shared
-repository behavior that should be confirmed first:
+**Applied** (QG-06 remediation, various dates):
+- Require a pull request before merging to `main` — **applied**.
+- Require the `Verify` job from `ci.yml` to pass before merging — **applied**.
+- Disallow force pushes to `main` — **applied**.
+- Disallow deletion of `main` — **applied**.
+- `production` GitHub Actions environment exists with `SUPABASE_ACCESS_TOKEN`,
+  `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`, and (F-QG06-11,
+  2026-09-24) `RENDER_API_KEY` — **applied**.
+- `production` environment's deployment branch policy restricted to `main`
+  only (`custom_branch_policies: true`, one policy: `main`) — **applied**
+  (F-QG06-11, 2026-09-24). This is a structural, platform-enforced
+  guarantee independent of `deploy-production.yml`'s own `guard` job — two
+  independent layers rejecting the same class of mistake.
 
-- Require a pull request before merging to `main`.
-- Require the `verify` job from `ci.yml` to pass before merging.
-- Require at least 1 approving review.
-- Disallow force pushes to `main`.
-- Disallow deletion of `main`.
-- Create a `production` GitHub Actions environment with the four secrets
-  from §13 (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`,
-  `SUPABASE_DB_PASSWORD`, `RENDER_DEPLOY_HOOK_URL`), and (recommended) at
-  least one required reviewer before `deploy-migrations.yml`/`deploy-api`
-  can run against it.
+**Still not applied** — a deliberate, undecided item, not an oversight:
+- At least 1 required approving PR review — this repository's branch
+  protection has `required_approving_review_count: 0` throughout
+  (single-maintainer repo; an unbreakable self-approval deadlock was
+  avoided intentionally, per this project's own established precedent).
+  Adding a required-reviewer rule specifically to the `production`
+  environment (distinct from branch protection) remains available and
+  would name a specific approver — a decision for the repository owner,
+  not invented here (§17).
 
 ## 19. Limitations
 
-- No production Supabase/Render/EAS project exists — every "VERIFIED" claim
-  in this document is local or container-local, never against a real
-  external environment (see §"DEPLOYED TO STAGING"/"DEPLOYED TO PRODUCTION"
-  definitions at the top — neither applies anywhere here).
-- Test B (temporary database interruption) was not exercised — no isolated
-  staging environment exists to safely run it against.
+Updated (QG-06 / F-QG06-11, 2026-09-24) — production Supabase/Render now
+exist and several items below are resolved; kept as an honest running list
+rather than silently rewritten:
+
+- No EAS project exists — mobile release remains entirely undeployed;
+  unaffected by this update.
+- Test B (temporary database interruption) was not exercised against
+  production — deferred, not performed merely to check a box, since it
+  would require deliberately degrading a real (if currently userless)
+  production database.
 - Horizontal scaling (multiple concurrent API/worker instances) is
-  untested — `numInstances: 1` is deliberate, not yet revisited.
-- No automated post-deploy health-check workflow step exists — only the
-  platform's own (Render's) restart-on-failed-health-check behavior, once a
-  service exists.
-- Region/plan sizing for the eventual Render service is not decided.
+  untested — `numInstances: 1` on both staging and production, deliberate,
+  not yet revisited.
+- Production Supabase's billing plan could not be determined via the
+  available API token (org-subscription endpoint returns `403`) —
+  genuinely unverified, not assumed Free or Pro.
+- Production PITR/backups remain disabled (F-QG06-01) — an account-owner
+  billing decision, explicitly out of this remediation's scope.
+- No production administrator account exists (F-QG06-09) — an
+  account-owner action per this project's standing prohibition on
+  autonomous account creation, explicitly out of this remediation's scope.
+- Whether Supabase's own dashboard-side GitHub Integration is active on the
+  new production project is unverified (F-QG06-13) — no API/CLI surface
+  exposes this; requires manual dashboard inspection by the account owner.
+- Production Vercel's own deployment was performed via `vercel --prod` from
+  a local checkout rather than a GitHub-integration-triggered build
+  (F-QG06-12, MINOR) — the artifact's provenance was verified manually at
+  deploy time (clean `git status`, `HEAD` confirmed) but Vercel's own
+  platform doesn't carry native commit metadata for it. This remediation's
+  scope was the production **API** deployment path (F-QG06-11) — extending
+  it to Vercel was explicitly out of scope per that task's own instructions
+  (§17), not overlooked.
+- `deploy-production.yml`'s Render deploy credential (`RENDER_API_KEY`) is
+  account/workspace-scoped rather than service-scoped — Render's API has no
+  finer-grained token type available to narrow this further; documented as
+  a known, platform-imposed limitation rather than a gap in this
+  implementation.
