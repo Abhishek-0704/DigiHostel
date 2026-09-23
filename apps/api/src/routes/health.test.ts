@@ -74,6 +74,20 @@ describe("GET /api/v1/healthz", () => {
 
     await app.close();
   });
+
+  it("carries baseline defense-in-depth security headers on every response (QG-06, F-QG06-08)", async () => {
+    const app = await buildTestApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/healthz" });
+
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["x-frame-options"]).toBe("DENY");
+    expect(response.headers["referrer-policy"]).toBe("no-referrer");
+    expect(response.headers["strict-transport-security"]).toBe(
+      "max-age=15552000; includeSubDomains",
+    );
+
+    await app.close();
+  });
 });
 
 describe("GET /api/v1/readyz — unreachable database (mocked)", () => {
