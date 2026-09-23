@@ -222,6 +222,7 @@ export const StaffAuthEventBodyEvent = {
   mfa_success: 'mfa_success',
   mfa_failure: 'mfa_failure',
   sign_out: 'sign_out',
+  sessions_signed_out_others: 'sessions_signed_out_others',
 } as const;
 
 /**
@@ -1358,6 +1359,398 @@ export interface ConfigurationValidationResult {
   reason?: string | null;
 }
 
+export type StaffIdentityRole = typeof StaffIdentityRole[keyof typeof StaffIdentityRole];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StaffIdentityRole = {
+  reception_warden: 'reception_warden',
+  hostel_admin: 'hostel_admin',
+  library_incharge: 'library_incharge',
+  super_admin: 'super_admin',
+} as const;
+
+export type StaffIdentityStatus = typeof StaffIdentityStatus[keyof typeof StaffIdentityStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const StaffIdentityStatus = {
+  active: 'active',
+  suspended: 'suspended',
+} as const;
+
+/**
+ * Read-only identity fields (Phase 7, Prompt 17) — role, hostel assignment, and account status remain owned by Identity & Access Administration (Prompt 13); this endpoint never accepts a write to any of them.
+
+ */
+export interface StaffIdentity {
+  id: string;
+  fullName: string;
+  role: StaffIdentityRole;
+  /** @nullable */
+  hostelId: string | null;
+  status: StaffIdentityStatus;
+  createdAt: string;
+}
+
+export interface PersonalShortcut {
+  /** @maxLength 100 */
+  id: string;
+  /** @maxLength 60 */
+  label: string;
+  /**
+   * A relative in-app path (must start with "/").
+   * @maxLength 200
+   */
+  path: string;
+}
+
+export type ProfilePreferencesPreferredContactMethod = typeof ProfilePreferencesPreferredContactMethod[keyof typeof ProfilePreferencesPreferredContactMethod];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilePreferencesPreferredContactMethod = {
+  email: 'email',
+  phone: 'phone',
+  in_app: 'in_app',
+} as const;
+
+export type ProfilePreferencesTheme = typeof ProfilePreferencesTheme[keyof typeof ProfilePreferencesTheme];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilePreferencesTheme = {
+  light: 'light',
+  dark: 'dark',
+  system: 'system',
+} as const;
+
+export type ProfilePreferencesDensity = typeof ProfilePreferencesDensity[keyof typeof ProfilePreferencesDensity];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilePreferencesDensity = {
+  comfortable: 'comfortable',
+  compact: 'compact',
+} as const;
+
+export type ProfilePreferencesFontScale = typeof ProfilePreferencesFontScale[keyof typeof ProfilePreferencesFontScale];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilePreferencesFontScale = {
+  default: 'default',
+  large: 'large',
+  larger: 'larger',
+} as const;
+
+export type ProfilePreferencesDateFormat = typeof ProfilePreferencesDateFormat[keyof typeof ProfilePreferencesDateFormat];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilePreferencesDateFormat = {
+  DD_MM_YYYY: 'DD_MM_YYYY',
+  MM_DD_YYYY: 'MM_DD_YYYY',
+  YYYY_MM_DD: 'YYYY_MM_DD',
+} as const;
+
+export type ProfilePreferencesDefaultLandingPage = typeof ProfilePreferencesDefaultLandingPage[keyof typeof ProfilePreferencesDefaultLandingPage];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfilePreferencesDefaultLandingPage = {
+  dashboard: 'dashboard',
+  leave: 'leave',
+  students: 'students',
+  notifications: 'notifications',
+  emergency: 'emergency',
+  health: 'health',
+  audit: 'audit',
+} as const;
+
+/**
+ * STORED, RUNTIME CONSUMPTION DEFERRED — no staff-facing notification delivery mechanism exists yet in this repository.
+
+ */
+export type ProfilePreferencesNotificationPreferences = {[key: string]: boolean};
+
+export type ProfilePreferencesDashboardPreferencesWidgetVisibility = {[key: string]: boolean};
+
+export type ProfilePreferencesDashboardPreferencesSavedFilters = {[key: string]: unknown};
+
+export type ProfilePreferencesDashboardPreferences = {
+  compactMode?: boolean;
+  widgetVisibility?: ProfilePreferencesDashboardPreferencesWidgetVisibility;
+  savedFilters?: ProfilePreferencesDashboardPreferencesSavedFilters;
+};
+
+export interface ProfilePreferences {
+  /** @nullable */
+  phoneNumber: string | null;
+  /** @nullable */
+  officeLocation: string | null;
+  /** @nullable */
+  bio: string | null;
+  preferredContactMethod: ProfilePreferencesPreferredContactMethod;
+  theme: ProfilePreferencesTheme;
+  density: ProfilePreferencesDensity;
+  fontScale: ProfilePreferencesFontScale;
+  dateFormat: ProfilePreferencesDateFormat;
+  reducedMotion: boolean;
+  highContrast: boolean;
+  defaultLandingPage: ProfilePreferencesDefaultLandingPage;
+  /** STORED, RUNTIME CONSUMPTION DEFERRED — no staff-facing notification delivery mechanism exists yet in this repository.
+ */
+  notificationPreferences: ProfilePreferencesNotificationPreferences;
+  dashboardPreferences: ProfilePreferencesDashboardPreferences;
+  /** @maxItems 20 */
+  shortcuts: PersonalShortcut[];
+  updatedAt: string;
+}
+
+export interface Profile {
+  identity: StaffIdentity;
+  preferences: ProfilePreferences;
+}
+
+export type ProfileUpdateBodyPreferredContactMethod = typeof ProfileUpdateBodyPreferredContactMethod[keyof typeof ProfileUpdateBodyPreferredContactMethod];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfileUpdateBodyPreferredContactMethod = {
+  email: 'email',
+  phone: 'phone',
+  in_app: 'in_app',
+} as const;
+
+export type ProfileUpdateBodyTheme = typeof ProfileUpdateBodyTheme[keyof typeof ProfileUpdateBodyTheme];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfileUpdateBodyTheme = {
+  light: 'light',
+  dark: 'dark',
+  system: 'system',
+} as const;
+
+export type ProfileUpdateBodyDensity = typeof ProfileUpdateBodyDensity[keyof typeof ProfileUpdateBodyDensity];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfileUpdateBodyDensity = {
+  comfortable: 'comfortable',
+  compact: 'compact',
+} as const;
+
+export type ProfileUpdateBodyFontScale = typeof ProfileUpdateBodyFontScale[keyof typeof ProfileUpdateBodyFontScale];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfileUpdateBodyFontScale = {
+  default: 'default',
+  large: 'large',
+  larger: 'larger',
+} as const;
+
+export type ProfileUpdateBodyDateFormat = typeof ProfileUpdateBodyDateFormat[keyof typeof ProfileUpdateBodyDateFormat];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfileUpdateBodyDateFormat = {
+  DD_MM_YYYY: 'DD_MM_YYYY',
+  MM_DD_YYYY: 'MM_DD_YYYY',
+  YYYY_MM_DD: 'YYYY_MM_DD',
+} as const;
+
+export type ProfileUpdateBodyDefaultLandingPage = typeof ProfileUpdateBodyDefaultLandingPage[keyof typeof ProfileUpdateBodyDefaultLandingPage];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ProfileUpdateBodyDefaultLandingPage = {
+  dashboard: 'dashboard',
+  leave: 'leave',
+  students: 'students',
+  notifications: 'notifications',
+  emergency: 'emergency',
+  health: 'health',
+  audit: 'audit',
+} as const;
+
+/**
+ * emergency_alert/health_alert cannot be set to false — rejected with 400 (profile_mandatory_notification).
+
+ */
+export type ProfileUpdateBodyNotificationPreferences = {[key: string]: boolean};
+
+export type ProfileUpdateBodyDashboardPreferencesWidgetVisibility = {[key: string]: boolean};
+
+export type ProfileUpdateBodyDashboardPreferencesSavedFilters = {[key: string]: unknown};
+
+export type ProfileUpdateBodyDashboardPreferences = {
+  compactMode?: boolean;
+  widgetVisibility?: ProfileUpdateBodyDashboardPreferencesWidgetVisibility;
+  savedFilters?: ProfileUpdateBodyDashboardPreferencesSavedFilters;
+};
+
+/**
+ * Every field optional (partial update). Deliberately does NOT declare role/hostelId/status/id/authUserId/staffId anywhere — `additionalProperties: false` rejects any attempt to send one.
+
+ */
+export interface ProfileUpdateBody {
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  fullName?: string;
+  /**
+   * @maxLength 30
+   * @nullable
+   */
+  phoneNumber?: string | null;
+  /**
+   * @maxLength 200
+   * @nullable
+   */
+  officeLocation?: string | null;
+  /**
+   * @maxLength 1000
+   * @nullable
+   */
+  bio?: string | null;
+  preferredContactMethod?: ProfileUpdateBodyPreferredContactMethod;
+  theme?: ProfileUpdateBodyTheme;
+  density?: ProfileUpdateBodyDensity;
+  fontScale?: ProfileUpdateBodyFontScale;
+  dateFormat?: ProfileUpdateBodyDateFormat;
+  reducedMotion?: boolean;
+  highContrast?: boolean;
+  defaultLandingPage?: ProfileUpdateBodyDefaultLandingPage;
+  /** emergency_alert/health_alert cannot be set to false — rejected with 400 (profile_mandatory_notification).
+ */
+  notificationPreferences?: ProfileUpdateBodyNotificationPreferences;
+  dashboardPreferences?: ProfileUpdateBodyDashboardPreferences;
+  /** @maxItems 20 */
+  shortcuts?: PersonalShortcut[];
+}
+
+/**
+ * Platform Health Model (Phase 7, Prompt 18). `unknown` is deliberately distinct from `healthy` — a signal this backend could not evaluate must never collapse into an implied-good state.
+
+ */
+export type HealthState = typeof HealthState[keyof typeof HealthState];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const HealthState = {
+  healthy: 'healthy',
+  warning: 'warning',
+  degraded: 'degraded',
+  unavailable: 'unavailable',
+  unknown: 'unknown',
+} as const;
+
+export interface HealthSignal {
+  id: string;
+  label: string;
+  state: HealthState;
+  detail: string;
+  measuredAt: string;
+  /** @nullable */
+  latencyMs?: number | null;
+}
+
+export interface ApplicationModuleStatus {
+  id: string;
+  label: string;
+  state: HealthState;
+  detail: string;
+}
+
+export type MonitoringOperationalSummaryLibraryOperationsStatus = typeof MonitoringOperationalSummaryLibraryOperationsStatus[keyof typeof MonitoringOperationalSummaryLibraryOperationsStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const MonitoringOperationalSummaryLibraryOperationsStatus = {
+  future: 'future',
+} as const;
+
+export interface MonitoringOperationalSummary {
+  pendingLeaveAuthorizations: number;
+  studentsOutsideHostel: number;
+  activeEmergencies: number;
+  criticalEmergencies: number;
+  activeHealthCases: number;
+  criticalHealthCases: number;
+  /** @nullable */
+  notificationsFailedLast24h: number | null;
+  libraryOperationsStatus: MonitoringOperationalSummaryLibraryOperationsStatus;
+}
+
+export interface MonitoringSecuritySummary {
+  recentMfaFailures24h: number;
+  suspendedStaffAccounts: number;
+  recentAdministrativeChanges24h: number;
+}
+
+export interface MonitoringDeploymentInfo {
+  version: string;
+  environment: string;
+}
+
+export type MonitoringAlertSeverity = typeof MonitoringAlertSeverity[keyof typeof MonitoringAlertSeverity];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const MonitoringAlertSeverity = {
+  informational: 'informational',
+  warning: 'warning',
+  critical: 'critical',
+} as const;
+
+export interface MonitoringAlert {
+  id: string;
+  severity: MonitoringAlertSeverity;
+  title: string;
+  detail: string;
+  source: string;
+}
+
+export interface MonitoringOverview {
+  generatedAt: string;
+  platformStatus: HealthState;
+  infrastructure: HealthSignal[];
+  applicationModules: ApplicationModuleStatus[];
+  operational: MonitoringOperationalSummary;
+  security: MonitoringSecuritySummary;
+  deployment: MonitoringDeploymentInfo;
+  alerts: MonitoringAlert[];
+}
+
+export interface DiagnosticDefinition {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export type DiagnosticResultStatus = typeof DiagnosticResultStatus[keyof typeof DiagnosticResultStatus];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const DiagnosticResultStatus = {
+  pass: 'pass',
+  fail: 'fail',
+  unavailable: 'unavailable',
+} as const;
+
+export interface DiagnosticResult {
+  id: string;
+  label: string;
+  status: DiagnosticResultStatus;
+  detail: string;
+  durationMs: number;
+  executedAt: string;
+}
+
 /**
  * Missing, malformed, or invalid authentication
  */
@@ -1559,6 +1952,11 @@ q?: string;
 module?: AuditModule[];
 actorType?: AuditActorType[];
 entityType?: AuditEntityType[];
+/**
+ * Phase 7, Prompt 17 — Administrative Profile's "Personal Activity" panel. Applied AFTER the existing hostel-scope check, never in place of it — narrows the caller's own already-scoped view; passing another staff member's id simply returns zero rows if it falls outside the caller's scope, never an error.
+
+ */
+actorId?: string;
 dateFrom?: string;
 dateTo?: string;
 /**
@@ -1595,6 +1993,10 @@ dateTo?: string;
 export type GetAnalyticsMovementTrendParams = {
 dateFrom?: string;
 dateTo?: string;
+};
+
+export type ListMonitoringDiagnostics200 = {
+  diagnostics: DiagnosticDefinition[];
 };
 
 export type GetReportsCatalog200 = {
@@ -5008,6 +5410,219 @@ export function useGetAnalyticsMovementTrend<TData = Awaited<ReturnType<typeof g
 
 
 /**
+ * Reuses the existing `system:view` permission boundary (granted only to super_admin since Prompt 3) and the existing AAL2 staff boundary. Aggregates real, directly-measured signals (database connectivity, Supabase Auth Admin API reachability, `supabase_realtime` publication membership) with genuine read-only reuse of already- certified domain services (Analytics, Emergency, Health, Staff Administration, Audit) for operational/security indicators. No metric is fabricated: a signal this backend cannot genuinely measure is reported as `unavailable`/`unknown`, never a invented value. See apps/reception-dashboard/docs/monitoring-center.md for the full health model and aggregation rules.
+
+ * @summary super_admin-only: Enterprise Operations Monitoring Center aggregate health view (Phase 7, Prompt 18)
+
+ */
+export const getMonitoringOverview = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<MonitoringOverview>(
+      {url: `/monitoring/overview`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetMonitoringOverviewQueryKey = () => {
+    return [
+    `/monitoring/overview`
+    ] as const;
+    }
+
+    
+export const getGetMonitoringOverviewQueryOptions = <TData = Awaited<ReturnType<typeof getMonitoringOverview>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMonitoringOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMonitoringOverviewQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMonitoringOverview>>> = ({ signal }) => getMonitoringOverview(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMonitoringOverview>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMonitoringOverviewQueryResult = NonNullable<Awaited<ReturnType<typeof getMonitoringOverview>>>
+export type GetMonitoringOverviewQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary super_admin-only: Enterprise Operations Monitoring Center aggregate health view (Phase 7, Prompt 18)
+
+ */
+
+export function useGetMonitoringOverview<TData = Awaited<ReturnType<typeof getMonitoringOverview>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMonitoringOverview>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMonitoringOverviewQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Returns only the diagnostic definitions themselves (id/label/ description) — running one is a separate, explicit POST. This allow-list is fixed at the backend; no diagnostic id outside it can ever be executed, regardless of client input.
+
+ * @summary super_admin-only: the fixed, server-owned diagnostic allow-list (Phase 7, Prompt 18)
+
+ */
+export const listMonitoringDiagnostics = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<ListMonitoringDiagnostics200>(
+      {url: `/monitoring/diagnostics`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getListMonitoringDiagnosticsQueryKey = () => {
+    return [
+    `/monitoring/diagnostics`
+    ] as const;
+    }
+
+    
+export const getListMonitoringDiagnosticsQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoringDiagnostics>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listMonitoringDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoringDiagnosticsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoringDiagnostics>>> = ({ signal }) => listMonitoringDiagnostics(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMonitoringDiagnostics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListMonitoringDiagnosticsQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoringDiagnostics>>>
+export type ListMonitoringDiagnosticsQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary super_admin-only: the fixed, server-owned diagnostic allow-list (Phase 7, Prompt 18)
+
+ */
+
+export function useListMonitoringDiagnostics<TData = Awaited<ReturnType<typeof listMonitoringDiagnostics>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listMonitoringDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListMonitoringDiagnosticsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * `diagnosticId` must be one of the fixed ids returned by GET /monitoring/diagnostics — any other value is rejected with `404`, never executed. Every diagnostic is read-only, bounded by a server-side timeout, and never mutates application or database state. Execution is recorded as one `monitoring.diagnostic_run` row in the existing audit trail (`audit_logs`) — no new audit mechanism.
+
+ * @summary super_admin-only: execute one allow-listed, read-only diagnostic check (Phase 7, Prompt 18)
+
+ */
+export const runMonitoringDiagnostic = (
+    diagnosticId: string,
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<DiagnosticResult>(
+      {url: `/monitoring/diagnostics/${diagnosticId}/run`, method: 'POST', signal
+    },
+      options);
+    }
+  
+
+
+export const getRunMonitoringDiagnosticMutationOptions = <TError = UnauthenticatedResponse | ForbiddenResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runMonitoringDiagnostic>>, TError,{diagnosticId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runMonitoringDiagnostic>>, TError,{diagnosticId: string}, TContext> => {
+
+const mutationKey = ['runMonitoringDiagnostic'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runMonitoringDiagnostic>>, {diagnosticId: string}> = (props) => {
+          const {diagnosticId} = props ?? {};
+
+          return  runMonitoringDiagnostic(diagnosticId,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunMonitoringDiagnosticMutationResult = NonNullable<Awaited<ReturnType<typeof runMonitoringDiagnostic>>>
+    
+    export type RunMonitoringDiagnosticMutationError = UnauthenticatedResponse | ForbiddenResponse | ErrorBody
+
+    /**
+ * @summary super_admin-only: execute one allow-listed, read-only diagnostic check (Phase 7, Prompt 18)
+
+ */
+export const useRunMonitoringDiagnostic = <TError = UnauthenticatedResponse | ForbiddenResponse | ErrorBody,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runMonitoringDiagnostic>>, TError,{diagnosticId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runMonitoringDiagnostic>>,
+        TError,
+        {diagnosticId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getRunMonitoringDiagnosticMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
  * Reuses the existing `reports:view` permission boundary — identical role grant to Analytics (Phase 6, Prompt 15). Every report's available fields/filters/sort options and status (implemented/unavailable) are server-derived; a report marked `unavailable` carries an honest `unavailableReason` rather than being silently omitted.
 
  * @summary hostel_admin/super_admin-only: the fixed, server-owned report catalog (Phase 6, Prompt 16 — Enterprise Reporting Platform)
@@ -6593,6 +7208,147 @@ export const useUpdateConfigurationEntry = <TError = ValidationErrorResponse | U
       > => {
 
       const mutationOptions = getUpdateConfigurationEntryMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * Self-scoped only — the acting staff id is always read from the verified JWT, never a client-supplied field. No AAL2 requirement (personal, non-privileged preference reads) and no hostel scoping. A missing preferences row is transparently created with safe defaults on first access, never causing an error.
+
+ * @summary Any staff role: the caller's own identity + personal preferences (Phase 7, Prompt 17 — Administrative Profile & Personal Preferences Center)
+
+ */
+export const getMyProfile = (
+    
+ options?: SecondParameter<typeof customFetch>,signal?: AbortSignal
+) => {
+      
+      
+      return customFetch<Profile>(
+      {url: `/profile`, method: 'GET', signal
+    },
+      options);
+    }
+  
+
+
+
+export const getGetMyProfileQueryKey = () => {
+    return [
+    `/profile`
+    ] as const;
+    }
+
+    
+export const getGetMyProfileQueryOptions = <TData = Awaited<ReturnType<typeof getMyProfile>>, TError = UnauthenticatedResponse | ForbiddenResponse>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMyProfileQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMyProfile>>> = ({ signal }) => getMyProfile(requestOptions, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMyProfile>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMyProfileQueryResult = NonNullable<Awaited<ReturnType<typeof getMyProfile>>>
+export type GetMyProfileQueryError = UnauthenticatedResponse | ForbiddenResponse
+
+
+/**
+ * @summary Any staff role: the caller's own identity + personal preferences (Phase 7, Prompt 17 — Administrative Profile & Personal Preferences Center)
+
+ */
+
+export function useGetMyProfile<TData = Awaited<ReturnType<typeof getMyProfile>>, TError = UnauthenticatedResponse | ForbiddenResponse>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMyProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMyProfileQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * A partial update — every field optional. `fullName` writes to the caller's own `staff.full_name` (the pre-existing self-update authority); every other field writes to the caller's own `staff_preferences` row. Role, permissions, hostel assignment, account status, and every other identity/authorization attribute are NOT declared on this schema at all (`additionalProperties: false`) — an attempt to send one is rejected outright with `400`, never silently ignored or applied. A mandatory safety notification category (`emergency_alert`/`health_alert`) cannot be disabled — rejected with `400`.
+
+ * @summary Any staff role: update permitted fields of the caller's own profile (Phase 7, Prompt 17)
+
+ */
+export const updateMyProfile = (
+    profileUpdateBody: ProfileUpdateBody,
+ options?: SecondParameter<typeof customFetch>,) => {
+      
+      
+      return customFetch<Profile>(
+      {url: `/profile`, method: 'PATCH',
+      headers: {'Content-Type': 'application/json', },
+      data: profileUpdateBody
+    },
+      options);
+    }
+  
+
+
+export const getUpdateMyProfileMutationOptions = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMyProfile>>, TError,{data: ProfileUpdateBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateMyProfile>>, TError,{data: ProfileUpdateBody}, TContext> => {
+
+const mutationKey = ['updateMyProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateMyProfile>>, {data: ProfileUpdateBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateMyProfile(data,requestOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateMyProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateMyProfile>>>
+    export type UpdateMyProfileMutationBody = ProfileUpdateBody
+    export type UpdateMyProfileMutationError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse
+
+    /**
+ * @summary Any staff role: update permitted fields of the caller's own profile (Phase 7, Prompt 17)
+
+ */
+export const useUpdateMyProfile = <TError = ValidationErrorResponse | UnauthenticatedResponse | ForbiddenResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateMyProfile>>, TError,{data: ProfileUpdateBody}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateMyProfile>>,
+        TError,
+        {data: ProfileUpdateBody},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateMyProfileMutationOptions(options);
 
       return useMutation(mutationOptions);
     }

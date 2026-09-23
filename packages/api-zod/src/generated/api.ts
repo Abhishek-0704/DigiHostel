@@ -74,7 +74,7 @@ export const verifyOtpResponse = zod.object({
 
  */
 export const recordStaffAuthEventBody = zod.object({
-  "event": zod.enum(['sign_in_success', 'mfa_success', 'mfa_failure', 'sign_out'])
+  "event": zod.enum(['sign_in_success', 'mfa_success', 'mfa_failure', 'sign_out', 'sessions_signed_out_others'])
 }).describe('Only events reportable while still holding a valid bearer token — see POST \/auth\/staff\/audit-events\'s own description.\n')
 
 
@@ -1196,6 +1196,7 @@ export const listAuditEventsQueryParams = zod.object({
   "module": zod.array(zod.enum(['leave', 'movement', 'emergency', 'health', 'device', 'staff-auth', 'other']).describe('A normalized, presentation-layer grouping derived server-side from each audit_logs row\'s own `action` prefix (Phase 5, Prompt 12) — never a stored column. `staff-auth` covers the staff_sign_in_success\/ mfa_success\/mfa_failure\/sign_out events; `other` covers any action that does not match a known module prefix (fails open to visibility, never silently dropped).\n')).optional(),
   "actorType": zod.array(zod.enum(['student', 'parent', 'staff', 'system']).describe('The audit_actor_type column\'s own real values — never invented.')).optional(),
   "entityType": zod.array(zod.enum(['leave_requests', 'security_incidents', 'health_cases', 'staff', 'trusted_devices', 'device_registration_challenges']).describe('Every distinct entity_type value any module currently writes, confirmed by repository-wide search. trusted_devices and device_registration_challenges rows have no hostel concept at all and are therefore visible only to super_admin (see GET \/audit\'s description).\n')).optional(),
+  "actorId": zod.string().uuid().optional().describe('Phase 7, Prompt 17 — Administrative Profile\'s \"Personal Activity\" panel. Applied AFTER the existing hostel-scope check, never in place of it — narrows the caller\'s own already-scoped view; passing another staff member\'s id simply returns zero rows if it falls outside the caller\'s scope, never an error.\n'),
   "dateFrom": zod.string().datetime({}).optional(),
   "dateTo": zod.string().datetime({}).optional(),
   "page": zod.number().min(1).default(listAuditEventsQueryPageDefault),
@@ -1344,6 +1345,93 @@ export const getAnalyticsMovementTrendResponse = zod.object({
   "hour": zod.number().min(getAnalyticsMovementTrendResponseReturnsByHourItemHourMin).max(getAnalyticsMovementTrendResponseReturnsByHourItemHourMax),
   "count": zod.number()
 })).describe('Always exactly 24 entries (hour 0-23), even for an empty period.')
+})
+
+
+/**
+ * Reuses the existing `system:view` permission boundary (granted only to super_admin since Prompt 3) and the existing AAL2 staff boundary. Aggregates real, directly-measured signals (database connectivity, Supabase Auth Admin API reachability, `supabase_realtime` publication membership) with genuine read-only reuse of already- certified domain services (Analytics, Emergency, Health, Staff Administration, Audit) for operational/security indicators. No metric is fabricated: a signal this backend cannot genuinely measure is reported as `unavailable`/`unknown`, never a invented value. See apps/reception-dashboard/docs/monitoring-center.md for the full health model and aggregation rules.
+
+ * @summary super_admin-only: Enterprise Operations Monitoring Center aggregate health view (Phase 7, Prompt 18)
+
+ */
+export const getMonitoringOverviewResponse = zod.object({
+  "generatedAt": zod.string().datetime({}),
+  "platformStatus": zod.enum(['healthy', 'warning', 'degraded', 'unavailable', 'unknown']).describe('Platform Health Model (Phase 7, Prompt 18). `unknown` is deliberately distinct from `healthy` — a signal this backend could not evaluate must never collapse into an implied-good state.\n'),
+  "infrastructure": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "state": zod.enum(['healthy', 'warning', 'degraded', 'unavailable', 'unknown']).describe('Platform Health Model (Phase 7, Prompt 18). `unknown` is deliberately distinct from `healthy` — a signal this backend could not evaluate must never collapse into an implied-good state.\n'),
+  "detail": zod.string(),
+  "measuredAt": zod.string().datetime({}),
+  "latencyMs": zod.number().nullish()
+})),
+  "applicationModules": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "state": zod.enum(['healthy', 'warning', 'degraded', 'unavailable', 'unknown']).describe('Platform Health Model (Phase 7, Prompt 18). `unknown` is deliberately distinct from `healthy` — a signal this backend could not evaluate must never collapse into an implied-good state.\n'),
+  "detail": zod.string()
+})),
+  "operational": zod.object({
+  "pendingLeaveAuthorizations": zod.number(),
+  "studentsOutsideHostel": zod.number(),
+  "activeEmergencies": zod.number(),
+  "criticalEmergencies": zod.number(),
+  "activeHealthCases": zod.number(),
+  "criticalHealthCases": zod.number(),
+  "notificationsFailedLast24h": zod.number().nullable(),
+  "libraryOperationsStatus": zod.enum(['future'])
+}),
+  "security": zod.object({
+  "recentMfaFailures24h": zod.number(),
+  "suspendedStaffAccounts": zod.number(),
+  "recentAdministrativeChanges24h": zod.number()
+}),
+  "deployment": zod.object({
+  "version": zod.string(),
+  "environment": zod.string()
+}),
+  "alerts": zod.array(zod.object({
+  "id": zod.string(),
+  "severity": zod.enum(['informational', 'warning', 'critical']),
+  "title": zod.string(),
+  "detail": zod.string(),
+  "source": zod.string()
+}))
+})
+
+
+/**
+ * Returns only the diagnostic definitions themselves (id/label/ description) — running one is a separate, explicit POST. This allow-list is fixed at the backend; no diagnostic id outside it can ever be executed, regardless of client input.
+
+ * @summary super_admin-only: the fixed, server-owned diagnostic allow-list (Phase 7, Prompt 18)
+
+ */
+export const listMonitoringDiagnosticsResponse = zod.object({
+  "diagnostics": zod.array(zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "description": zod.string()
+}))
+})
+
+
+/**
+ * `diagnosticId` must be one of the fixed ids returned by GET /monitoring/diagnostics — any other value is rejected with `404`, never executed. Every diagnostic is read-only, bounded by a server-side timeout, and never mutates application or database state. Execution is recorded as one `monitoring.diagnostic_run` row in the existing audit trail (`audit_logs`) — no new audit mechanism.
+
+ * @summary super_admin-only: execute one allow-listed, read-only diagnostic check (Phase 7, Prompt 18)
+
+ */
+export const runMonitoringDiagnosticParams = zod.object({
+  "diagnosticId": zod.string()
+})
+
+export const runMonitoringDiagnosticResponse = zod.object({
+  "id": zod.string(),
+  "label": zod.string(),
+  "status": zod.enum(['pass', 'fail', 'unavailable']),
+  "detail": zod.string(),
+  "durationMs": zod.number(),
+  "executedAt": zod.string().datetime({})
 })
 
 
@@ -1975,3 +2063,153 @@ export const updateConfigurationEntryResponse = zod.object({
   "createdAt": zod.string().datetime({}),
   "updatedAt": zod.string().datetime({})
 }).describe('One `configuration_entries` row. `value`\'s JSON shape is validated server-side against `valueType` on every write (`POST`\/`PATCH`) — never merely a client-side convention.\n')
+
+
+/**
+ * Self-scoped only — the acting staff id is always read from the verified JWT, never a client-supplied field. No AAL2 requirement (personal, non-privileged preference reads) and no hostel scoping. A missing preferences row is transparently created with safe defaults on first access, never causing an error.
+
+ * @summary Any staff role: the caller's own identity + personal preferences (Phase 7, Prompt 17 — Administrative Profile & Personal Preferences Center)
+
+ */
+export const getMyProfileResponsePreferencesShortcutsItemIdMax = 100;
+
+export const getMyProfileResponsePreferencesShortcutsItemLabelMax = 60;
+
+export const getMyProfileResponsePreferencesShortcutsItemPathMax = 200;
+
+export const getMyProfileResponsePreferencesShortcutsMax = 20;
+
+
+
+export const getMyProfileResponse = zod.object({
+  "identity": zod.object({
+  "id": zod.string().uuid(),
+  "fullName": zod.string(),
+  "role": zod.enum(['reception_warden', 'hostel_admin', 'library_incharge', 'super_admin']),
+  "hostelId": zod.string().uuid().nullable(),
+  "status": zod.enum(['active', 'suspended']),
+  "createdAt": zod.string().datetime({})
+}).describe('Read-only identity fields (Phase 7, Prompt 17) — role, hostel assignment, and account status remain owned by Identity & Access Administration (Prompt 13); this endpoint never accepts a write to any of them.\n'),
+  "preferences": zod.object({
+  "phoneNumber": zod.string().nullable(),
+  "officeLocation": zod.string().nullable(),
+  "bio": zod.string().nullable(),
+  "preferredContactMethod": zod.enum(['email', 'phone', 'in_app']),
+  "theme": zod.enum(['light', 'dark', 'system']),
+  "density": zod.enum(['comfortable', 'compact']),
+  "fontScale": zod.enum(['default', 'large', 'larger']),
+  "dateFormat": zod.enum(['DD_MM_YYYY', 'MM_DD_YYYY', 'YYYY_MM_DD']),
+  "reducedMotion": zod.boolean(),
+  "highContrast": zod.boolean(),
+  "defaultLandingPage": zod.enum(['dashboard', 'leave', 'students', 'notifications', 'emergency', 'health', 'audit']),
+  "notificationPreferences": zod.record(zod.string(), zod.boolean()).describe('STORED, RUNTIME CONSUMPTION DEFERRED — no staff-facing notification delivery mechanism exists yet in this repository.\n'),
+  "dashboardPreferences": zod.object({
+  "compactMode": zod.boolean().optional(),
+  "widgetVisibility": zod.record(zod.string(), zod.boolean()).optional(),
+  "savedFilters": zod.record(zod.string(), zod.unknown()).optional()
+}),
+  "shortcuts": zod.array(zod.object({
+  "id": zod.string().max(getMyProfileResponsePreferencesShortcutsItemIdMax),
+  "label": zod.string().max(getMyProfileResponsePreferencesShortcutsItemLabelMax),
+  "path": zod.string().max(getMyProfileResponsePreferencesShortcutsItemPathMax).describe('A relative in-app path (must start with \"\/\").')
+})).max(getMyProfileResponsePreferencesShortcutsMax),
+  "updatedAt": zod.string().datetime({})
+})
+})
+
+
+/**
+ * A partial update — every field optional. `fullName` writes to the caller's own `staff.full_name` (the pre-existing self-update authority); every other field writes to the caller's own `staff_preferences` row. Role, permissions, hostel assignment, account status, and every other identity/authorization attribute are NOT declared on this schema at all (`additionalProperties: false`) — an attempt to send one is rejected outright with `400`, never silently ignored or applied. A mandatory safety notification category (`emergency_alert`/`health_alert`) cannot be disabled — rejected with `400`.
+
+ * @summary Any staff role: update permitted fields of the caller's own profile (Phase 7, Prompt 17)
+
+ */
+export const updateMyProfileBodyFullNameMax = 200;
+
+export const updateMyProfileBodyPhoneNumberMax = 30;
+
+export const updateMyProfileBodyOfficeLocationMax = 200;
+
+export const updateMyProfileBodyBioMax = 1000;
+
+export const updateMyProfileBodyShortcutsItemIdMax = 100;
+
+export const updateMyProfileBodyShortcutsItemLabelMax = 60;
+
+export const updateMyProfileBodyShortcutsItemPathMax = 200;
+
+export const updateMyProfileBodyShortcutsMax = 20;
+
+
+
+export const updateMyProfileBody = zod.object({
+  "fullName": zod.string().min(1).max(updateMyProfileBodyFullNameMax).optional(),
+  "phoneNumber": zod.string().max(updateMyProfileBodyPhoneNumberMax).nullish(),
+  "officeLocation": zod.string().max(updateMyProfileBodyOfficeLocationMax).nullish(),
+  "bio": zod.string().max(updateMyProfileBodyBioMax).nullish(),
+  "preferredContactMethod": zod.enum(['email', 'phone', 'in_app']).optional(),
+  "theme": zod.enum(['light', 'dark', 'system']).optional(),
+  "density": zod.enum(['comfortable', 'compact']).optional(),
+  "fontScale": zod.enum(['default', 'large', 'larger']).optional(),
+  "dateFormat": zod.enum(['DD_MM_YYYY', 'MM_DD_YYYY', 'YYYY_MM_DD']).optional(),
+  "reducedMotion": zod.boolean().optional(),
+  "highContrast": zod.boolean().optional(),
+  "defaultLandingPage": zod.enum(['dashboard', 'leave', 'students', 'notifications', 'emergency', 'health', 'audit']).optional(),
+  "notificationPreferences": zod.record(zod.string(), zod.boolean()).optional().describe('emergency_alert\/health_alert cannot be set to false — rejected with 400 (profile_mandatory_notification).\n'),
+  "dashboardPreferences": zod.object({
+  "compactMode": zod.boolean().optional(),
+  "widgetVisibility": zod.record(zod.string(), zod.boolean()).optional(),
+  "savedFilters": zod.record(zod.string(), zod.unknown()).optional()
+}).optional(),
+  "shortcuts": zod.array(zod.object({
+  "id": zod.string().max(updateMyProfileBodyShortcutsItemIdMax),
+  "label": zod.string().max(updateMyProfileBodyShortcutsItemLabelMax),
+  "path": zod.string().max(updateMyProfileBodyShortcutsItemPathMax).describe('A relative in-app path (must start with \"\/\").')
+})).max(updateMyProfileBodyShortcutsMax).optional()
+}).describe('Every field optional (partial update). Deliberately does NOT declare role\/hostelId\/status\/id\/authUserId\/staffId anywhere — `additionalProperties: false` rejects any attempt to send one.\n')
+
+export const updateMyProfileResponsePreferencesShortcutsItemIdMax = 100;
+
+export const updateMyProfileResponsePreferencesShortcutsItemLabelMax = 60;
+
+export const updateMyProfileResponsePreferencesShortcutsItemPathMax = 200;
+
+export const updateMyProfileResponsePreferencesShortcutsMax = 20;
+
+
+
+export const updateMyProfileResponse = zod.object({
+  "identity": zod.object({
+  "id": zod.string().uuid(),
+  "fullName": zod.string(),
+  "role": zod.enum(['reception_warden', 'hostel_admin', 'library_incharge', 'super_admin']),
+  "hostelId": zod.string().uuid().nullable(),
+  "status": zod.enum(['active', 'suspended']),
+  "createdAt": zod.string().datetime({})
+}).describe('Read-only identity fields (Phase 7, Prompt 17) — role, hostel assignment, and account status remain owned by Identity & Access Administration (Prompt 13); this endpoint never accepts a write to any of them.\n'),
+  "preferences": zod.object({
+  "phoneNumber": zod.string().nullable(),
+  "officeLocation": zod.string().nullable(),
+  "bio": zod.string().nullable(),
+  "preferredContactMethod": zod.enum(['email', 'phone', 'in_app']),
+  "theme": zod.enum(['light', 'dark', 'system']),
+  "density": zod.enum(['comfortable', 'compact']),
+  "fontScale": zod.enum(['default', 'large', 'larger']),
+  "dateFormat": zod.enum(['DD_MM_YYYY', 'MM_DD_YYYY', 'YYYY_MM_DD']),
+  "reducedMotion": zod.boolean(),
+  "highContrast": zod.boolean(),
+  "defaultLandingPage": zod.enum(['dashboard', 'leave', 'students', 'notifications', 'emergency', 'health', 'audit']),
+  "notificationPreferences": zod.record(zod.string(), zod.boolean()).describe('STORED, RUNTIME CONSUMPTION DEFERRED — no staff-facing notification delivery mechanism exists yet in this repository.\n'),
+  "dashboardPreferences": zod.object({
+  "compactMode": zod.boolean().optional(),
+  "widgetVisibility": zod.record(zod.string(), zod.boolean()).optional(),
+  "savedFilters": zod.record(zod.string(), zod.unknown()).optional()
+}),
+  "shortcuts": zod.array(zod.object({
+  "id": zod.string().max(updateMyProfileResponsePreferencesShortcutsItemIdMax),
+  "label": zod.string().max(updateMyProfileResponsePreferencesShortcutsItemLabelMax),
+  "path": zod.string().max(updateMyProfileResponsePreferencesShortcutsItemPathMax).describe('A relative in-app path (must start with \"\/\").')
+})).max(updateMyProfileResponsePreferencesShortcutsMax),
+  "updatedAt": zod.string().datetime({})
+})
+})
