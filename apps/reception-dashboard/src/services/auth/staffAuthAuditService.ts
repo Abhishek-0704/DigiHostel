@@ -1,7 +1,8 @@
 import { recordStaffAuthEvent as recordStaffAuthEventApiCall } from "@digihostel/api-client-react";
 import { logger } from "../../lib/logging/logger";
 
-export type StaffAuthAuditEvent = "sign_in_success" | "mfa_success" | "mfa_failure" | "sign_out";
+export type StaffAuthAuditEvent =
+  "sign_in_success" | "mfa_success" | "mfa_failure" | "sign_out" | "sessions_signed_out_others";
 
 /**
  * Frontend counterpart of apps/api/src/domain/auth/staffAuthAudit.ts

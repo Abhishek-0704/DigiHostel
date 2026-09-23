@@ -159,3 +159,14 @@ export const RATE_LIMIT_CONFIGURATION_ADMIN: RateLimitTier = {
   max: envNumber("RATE_LIMIT_CONFIGURATION_ADMIN_MAX", 30),
   timeWindow: envNumber("RATE_LIMIT_CONFIGURATION_ADMIN_WINDOW_MS", 60_000),
 };
+
+/** Phase 7, Prompt 17 — Administrative Profile & Personal Preferences
+ * Center. A self-service settings page: reads on every page nav plus
+ * occasional saves, by every staff member (not just two privileged roles),
+ * so this is deliberately more generous than `configurationAdmin` — no
+ * cross-user or cross-hostel effect is possible from this route family at
+ * all (every operation is confined to the caller's own row). */
+export const RATE_LIMIT_PROFILE: RateLimitTier = {
+  max: envNumber("RATE_LIMIT_PROFILE_MAX", 60),
+  timeWindow: envNumber("RATE_LIMIT_PROFILE_WINDOW_MS", 60_000),
+};

@@ -33,3 +33,5 @@ export type {
 } from "./health/HealthService";
 export type { DashboardService, DashboardSummary } from "./dashboard/DashboardService";
 export type { ReportService, ReportDefinition } from "./reports/ReportService";
+export { profileService } from "./profile/ProfileService";
+export type { ProfileService } from "./profile/ProfileService";

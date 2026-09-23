@@ -90,6 +90,7 @@ function buildFilters(input: {
   modules?: AuditModule[];
   actorTypes?: string[];
   entityTypes?: string[];
+  actorId?: string;
   dateFrom?: string;
   dateTo?: string;
 }) {
@@ -128,6 +129,9 @@ function buildFilters(input: {
         sql`, `,
       )})`,
     );
+  }
+  if (input.actorId) {
+    conditions.push(sql`resolved.actor_id = ${input.actorId}`);
   }
   if (input.dateFrom) {
     conditions.push(sql`resolved.occurred_at >= ${input.dateFrom}`);

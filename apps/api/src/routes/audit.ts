@@ -18,6 +18,13 @@ const listQuerySchema = z
     module: toArray(z.enum(AUDIT_MODULES)).optional(),
     actorType: toArray(z.enum(AUDIT_ACTOR_TYPES)).optional(),
     entityType: toArray(z.enum(AUDIT_ENTITY_TYPES)).optional(),
+    // Phase 7, Prompt 17 — Administrative Profile's "Personal Activity"
+    // panel. Applied after the existing hostel-scope check, never in place
+    // of it — a caller can only ever narrow their own already-scoped view,
+    // never widen it (passing another staff member's id here simply
+    // returns zero rows if that id falls outside the caller's own scope,
+    // never an error and never a way to enumerate another user's activity).
+    actorId: z.string().uuid().optional(),
     dateFrom: z.string().datetime().optional(),
     dateTo: z.string().datetime().optional(),
     page: z.coerce.number().int().min(1).max(10_000).optional().default(1),
@@ -112,6 +119,7 @@ export async function auditRoutes(app: FastifyInstance) {
         modules: query.data.module,
         actorTypes: query.data.actorType,
         entityTypes: query.data.entityType,
+        actorId: query.data.actorId,
         dateFrom: query.data.dateFrom,
         dateTo: query.data.dateTo,
         page: query.data.page,

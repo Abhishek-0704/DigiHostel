@@ -11,6 +11,7 @@ import {
 import { authService } from "../services/auth/authService";
 import { mfaService } from "../services/auth/mfaService";
 import { staffAuthAuditService } from "../services/auth/staffAuthAuditService";
+import { queryClient } from "../lib/query/queryClient";
 import { useInactivityTimer } from "../hooks/useInactivityTimer";
 import { SESSION_TIMEOUT_CONFIG } from "../lib/sessionTimeout/config";
 import type { InactivityStatus } from "../lib/sessionTimeout/inactivityStatus";
@@ -174,6 +175,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         void staffAuthAuditService.record("sign_out");
       }
       await authService.signOut();
+      // Phase 7, Prompt 17 (§24 — "after logout: personal profile/
+      // preference state must not remain available to the next
+      // authenticated user in the same browser context"). Found genuinely
+      // missing during this task's own adversarial verification: nothing
+      // anywhere in this app previously cleared TanStack Query's cache on
+      // sign-out, so a stale cached value (this feature's own /profile
+      // response, or any other query keyed without a per-user
+      // discriminator) could theoretically flash before refetch on a
+      // different user's next sign-in within the same page session. Every
+      // query is per-user server state — clearing the whole cache on every
+      // sign-out is correct for all of them, not just this feature's own.
+      queryClient.clear();
     },
     [session],
   );

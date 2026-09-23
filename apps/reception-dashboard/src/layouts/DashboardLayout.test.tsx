@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { DashboardLayout } from "./DashboardLayout";
+import { ThemeProvider } from "../contexts/ThemeContext";
 import { useSessionContext } from "../contexts/SessionContext";
 import { useAuthContext } from "../contexts/AuthContext";
 import { useAuthorization } from "../contexts/AuthorizationContext";
@@ -64,14 +66,27 @@ function setup() {
 }
 
 function renderShell() {
+  // QueryClientProvider (Phase 7, Prompt 17): DashboardLayout now mounts
+  // ThemePreferenceSync alongside SessionTimeoutWarning, which reads the
+  // real useProfile() (useQuery) hook — not mocked here, since this suite
+  // is testing shell landmarks/routing, not profile data; a disabled
+  // retry keeps the resulting failed fetch from retrying/logging noise
+  // during the test.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter initialEntries={["/dashboard"]}>
-      <Routes>
-        <Route path="/dashboard" element={<DashboardLayout />}>
-          <Route index element={<div>Page Content</div>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <MemoryRouter initialEntries={["/dashboard"]}>
+          <Routes>
+            <Route path="/dashboard" element={<DashboardLayout />}>
+              <Route index element={<div>Page Content</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </ThemeProvider>
+    </QueryClientProvider>,
   );
 }
 
