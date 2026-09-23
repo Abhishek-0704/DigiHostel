@@ -23,6 +23,13 @@ name: Deploy Database Migrations
 #
 # Never runs against the local dev stack, and never runs `supabase db reset`
 # (which is destructive) — only the additive `supabase db push`.
+#
+# QG-06 remediation (F-QG06-11): also invocable as a reusable workflow
+# (`workflow_call`) so deploy-production.yml can run this exact, unchanged
+# migration step as the first stage of a controlled production release,
+# without duplicating its logic into a second migration mechanism. This is
+# purely additive — the existing `push`/`workflow_dispatch` triggers and
+# their behavior are unchanged.
 
 on:
   push:
@@ -30,6 +37,10 @@ on:
     paths:
       - "supabase/migrations/**"
   workflow_dispatch: {}
+  workflow_call: {}
+
+permissions:
+  contents: read
 
 jobs:
   deploy-migrations:
