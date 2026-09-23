@@ -1,0 +1,76 @@
+name: Deploy Database Migrations (Staging)
+
+# QG-06 remediation (F-QG06-04) — the missing "natural follow-up" this
+# project's own docs/runbooks/production-deployment.md already named:
+# "A minimal deploy-migrations-staging.yml mirroring the production one
+# but targeting the staging environment's secrets would be the natural
+# follow-up if staging migrations need to be automated later; not created
+# in this task to avoid adding an unused workflow file before a second
+# real migration is ever needed against staging." That second migration
+# need has now arrived (Prompt 17's staff_preferences table, migration
+# 0025) — this is that follow-up.
+#
+# This is a sibling of deploy-migrations.yml, not a replacement — that
+# file remains correctly reserved for a genuine, separately-provisioned
+# production Supabase project (ADR-013's authoritative GitHub-Actions
+# migration mechanism), and stays intentionally non-functional (0 secrets
+# on the `production` GitHub environment) until one exists. This workflow
+# targets the `staging` GitHub environment, which already holds real,
+# working credentials (RENDER_API_KEY, RENDER_SERVICE_ID,
+# SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD,
+# provisioned during F-06-STAGING) that no workflow had ever referenced —
+# `SUPABASE_PROJECT_ID` here resolves to the one Supabase project that
+# currently exists (`lhonrqjmlhlehpbxvrag`, called "staging" throughout
+# this repository's own documentation).
+#
+# Establishing this closes the QG-06-identified architecture drift: prior
+# to this workflow, deploy-migrations.yml's own broken, misdirected
+# `production`-environment attempt failed on every run, so Supabase's own
+# dashboard-configured GitHub Integration was silently the only mechanism
+# actually applying migrations to the shared project — exactly the
+# "second, redundant, and potentially conflicting migration-deployment
+# path" ADR-013 explicitly says not to rely on. This workflow makes the
+# GitHub-Actions path genuinely authoritative for staging, as designed.
+# The Supabase-side GitHub Integration itself cannot be disabled from
+# this repository or the Supabase CLI — it is a dashboard-only setting
+# (Project Settings -> Integrations) with no CLI/Management-API toggle
+# found; the account owner must disable it manually once this workflow is
+# confirmed working, to remove the redundant path entirely rather than
+# leaving both active.
+#
+# Never runs against the local dev stack, and never runs `supabase db
+# reset` (destructive) — only the additive `supabase db push`, identical
+# discipline to deploy-migrations.yml.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+  workflow_dispatch: {}
+
+jobs:
+  deploy-migrations-staging:
+    name: Deploy migrations to staging Supabase
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      - name: Link to staging project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Push migrations (additive only — never a reset)
+        run: supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

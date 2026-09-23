@@ -432,11 +432,26 @@ resolved).
 environment/secrets and was **not** used for this staging provisioning —
 migrations were applied directly via `supabase db push` against the
 linked staging project instead, since no staging-specific migration
-workflow existed yet. A minimal `deploy-migrations-staging.yml` mirroring
-the production one but targeting the `staging` environment's secrets would
-be the natural follow-up if staging migrations need to be automated later;
-not created in this task to avoid adding an unused workflow file before a
-second real migration is ever needed against staging.
+workflow existed yet.
+
+**Update (QG-06 remediation, F-QG06-04, closed):** the "natural follow-up"
+named above has been implemented —
+`.github/workflows/deploy-migrations-staging.yml` now mirrors
+`deploy-migrations.yml` exactly but targets the `staging` GitHub
+environment's already-provisioned secrets. This closed a genuine
+architecture-drift finding discovered during QG-06: because
+`deploy-migrations.yml` itself always targeted the (empty) `production`
+environment, it failed on every run against `main`, and Supabase's own
+dashboard-configured GitHub Integration was silently the only mechanism
+actually applying migrations to the shared project — exactly the "second,
+redundant, and potentially conflicting migration-deployment path" ADR-013
+says not to rely on. The new staging workflow makes GitHub Actions
+genuinely authoritative for the environment that currently exists, as
+ADR-013 intends. **Outstanding, requires the account owner's own action**:
+the Supabase-side GitHub Integration itself has no CLI/Management-API
+toggle found — it must be disabled manually via the Supabase Dashboard
+(Project Settings → Integrations) once the new workflow is confirmed
+successful, to remove the now-redundant second path entirely.
 
 ### Staging limitations (honest, not glossed over)
 

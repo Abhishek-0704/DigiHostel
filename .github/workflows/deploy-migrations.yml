@@ -12,9 +12,14 @@ name: Deploy Database Migrations
 # be triggered manually. Requires SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID
 # and SUPABASE_DB_PASSWORD to be configured as encrypted secrets on the
 # `production` GitHub environment (see docs/runbooks/production-deployment.md
-# §10) — until a production Supabase project exists and those secrets are
-# configured, this workflow's `link` step fails fast and clearly rather than
-# doing anything destructive or partial.
+# §10) — until a genuinely separate production Supabase project exists and
+# those secrets are configured, this workflow's `link` step fails fast and
+# clearly rather than doing anything destructive or partial. This is
+# intentional and unchanged by QG-06 remediation: this file stays reserved
+# for real production infrastructure, never repointed at the shared
+# staging project. See the sibling deploy-migrations-staging.yml
+# (QG-06, F-QG06-04) for the now-working staging equivalent, which targets
+# the `staging` GitHub environment's already-provisioned credentials.
 #
 # Never runs against the local dev stack, and never runs `supabase db reset`
 # (which is destructive) — only the additive `supabase db push`.
