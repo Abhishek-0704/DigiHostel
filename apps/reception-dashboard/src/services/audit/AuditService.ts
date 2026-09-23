@@ -13,6 +13,10 @@ export interface AuditListParams {
   module?: AuditModule[];
   actorType?: AuditActorType[];
   entityType?: AuditEntityType[];
+  /** Phase 7, Prompt 17 — Administrative Profile's "Personal Activity"
+   * panel narrows the caller's own already-hostel-scoped view to events
+   * they themselves are the actor of. */
+  actorId?: string;
   dateFrom?: string;
   dateTo?: string;
   page: number;
@@ -43,6 +47,7 @@ export const auditService: AuditService = {
       module: params.module,
       actorType: params.actorType,
       entityType: params.entityType,
+      actorId: params.actorId,
       dateFrom: params.dateFrom,
       dateTo: params.dateTo,
       page: params.page,

@@ -9,6 +9,7 @@ const STAFF_AUTH_AUDIT_EVENTS = [
   "mfa_success",
   "mfa_failure",
   "sign_out",
+  "sessions_signed_out_others",
 ] as const;
 
 const staffAuthEventBodySchema = z

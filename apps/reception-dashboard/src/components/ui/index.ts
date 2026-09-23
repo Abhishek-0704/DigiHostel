@@ -19,3 +19,5 @@ export { EmptyState } from "./EmptyState";
 export { ErrorState } from "./ErrorState";
 export { ToastProvider, useToast } from "./Toast";
 export type { ToastOptions, ToastVariant } from "./Toast";
+export { Toggle } from "./Toggle";
+export type { ToggleProps } from "./Toggle";

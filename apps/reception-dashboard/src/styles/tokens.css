@@ -50,8 +50,15 @@
   --color-overlay: rgba(15, 17, 21, 0.4);
 }
 
+/* `[data-theme]` (Phase 7, Prompt 17 — Administrative Profile & Personal
+   Preferences Center) is set on `<html>` by ThemeContext.tsx once the
+   caller's saved theme preference resolves, and always wins over the OS
+   media query below — an explicit "Light" choice must render light even on
+   a dark-OS device, and vice versa. No attribute at all (pre-hydration, or
+   `themePreference === "system"` resolving transiently) falls through to
+   the OS preference exactly as before this feature existed. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --color-background: #101216;
     --color-surface: #181b21;
     --color-surface-variant: #20242c;
@@ -71,4 +78,50 @@
     --color-text-disabled: #5b6272;
     --color-overlay: rgba(0, 0, 0, 0.6);
   }
+}
+
+:root[data-theme="dark"] {
+  --color-background: #101216;
+  --color-surface: #181b21;
+  --color-surface-variant: #20242c;
+  --color-primary: #7ea0f5;
+  --color-on-primary: #0a1330;
+  --color-secondary: #aeb8cc;
+  --color-on-secondary: #161a22;
+  --color-success: #5fc79a;
+  --color-on-success: #082c1d;
+  --color-warning: #e3a03f;
+  --color-on-warning: #3a2500;
+  --color-error: #e5786c;
+  --color-on-error: #3a0e08;
+  --color-border: #2a2e37;
+  --color-text-primary: #edeff3;
+  --color-text-secondary: #aeb4c2;
+  --color-text-disabled: #5b6272;
+  --color-overlay: rgba(0, 0, 0, 0.6);
+}
+
+/* Reduced motion / high contrast / font scale (Phase 7, Prompt 17) — set on
+   <html> by ThemeContext.tsx alongside data-theme, from the caller's saved
+   accessibility preferences. Additive only (§13 — "accessibility settings
+   must be additive"): neither rule removes any information, control, or
+   confirmation step, only motion/contrast/size presentation. */
+[data-reduced-motion="true"] * {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+[data-high-contrast="true"] {
+  --color-border: #000000;
+  --color-text-secondary: var(--color-text-primary);
+}
+
+[data-font-scale="large"] {
+  font-size: 112.5%;
+}
+
+[data-font-scale="larger"] {
+  font-size: 125%;
 }

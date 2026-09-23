@@ -90,6 +90,14 @@ export interface AuditListInput extends StaffScopeInput {
   modules?: AuditModule[];
   actorTypes?: AuditActorType[];
   entityTypes?: AuditEntityType[];
+  /** Phase 7, Prompt 17 — Administrative Profile's "Personal Activity"
+   * panel filters the caller's own already-hostel-scoped audit trail down
+   * to events they themselves are the actor of. Applied AFTER the existing
+   * hostel-scope check (buildFilters), never in place of it — mirrors the
+   * exact `studentId`-on-Emergency/Health-list precedent (Prompt 11
+   * closure): a purely additive, optional narrowing filter, zero behavior
+   * change for every existing caller that omits it. */
+  actorId?: string;
   dateFrom?: string;
   dateTo?: string;
   page: number;

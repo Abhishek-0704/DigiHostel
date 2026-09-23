@@ -10,3 +10,4 @@ export * from "./audit.js";
 export * from "./health.js";
 export * from "./configuration.js";
 export * from "./reports.js";
+export * from "./preferences.js";

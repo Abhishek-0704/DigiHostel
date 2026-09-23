@@ -15,6 +15,7 @@ import {
   RATE_LIMIT_EXIT_AUTHORIZATION,
   RATE_LIMIT_STAFF_ADMIN,
   RATE_LIMIT_CONFIGURATION_ADMIN,
+  RATE_LIMIT_PROFILE,
   type RateLimitTier,
 } from "../config/rateLimit.js";
 
@@ -33,6 +34,7 @@ export interface RateLimitTiers {
   exitAuthorization: RateLimitTier;
   staffAdmin: RateLimitTier;
   configurationAdmin: RateLimitTier;
+  profile: RateLimitTier;
 }
 
 export interface RegisterRateLimitOverrides {
@@ -90,6 +92,7 @@ export async function registerRateLimit(
     exitAuthorization: overrides.tiers?.exitAuthorization ?? RATE_LIMIT_EXIT_AUTHORIZATION,
     staffAdmin: overrides.tiers?.staffAdmin ?? RATE_LIMIT_STAFF_ADMIN,
     configurationAdmin: overrides.tiers?.configurationAdmin ?? RATE_LIMIT_CONFIGURATION_ADMIN,
+    profile: overrides.tiers?.profile ?? RATE_LIMIT_PROFILE,
   };
 
   await app.register(rateLimit, {

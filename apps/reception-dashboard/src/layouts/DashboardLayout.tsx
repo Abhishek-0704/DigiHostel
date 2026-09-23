@@ -1,6 +1,7 @@
 import { Outlet } from "react-router-dom";
 import { Sidebar, Header, Footer, SkipLink } from "../components/layout";
 import { SessionTimeoutWarning } from "../components/auth";
+import { ThemePreferenceSync } from "../components/profile/ThemePreferenceSync";
 import { useSidebarState } from "../state/sidebarState";
 import styles from "./DashboardLayout.module.css";
 
@@ -31,6 +32,7 @@ export function DashboardLayout() {
       <div className={styles.main}>
         <Header onToggleSidebar={toggle} />
         <SessionTimeoutWarning />
+        <ThemePreferenceSync />
         <main id={MAIN_CONTENT_ID} className={styles.content}>
           <Outlet />
         </main>

@@ -79,4 +79,18 @@ export const authService = {
     const { error } = await getSupabaseClient().auth.signOut();
     if (error) throw mapAuthError(error);
   },
+
+  /** Phase 7, Prompt 17 — Administrative Profile's Session Management
+   * panel. GoTrue's own native `scope: "others"` sign-out: revokes every
+   * OTHER session belonging to the SAME authenticated user, using nothing
+   * but the current session's own access token. There is no user/session
+   * identifier parameter anywhere in this call or in GoTrue's own API for
+   * it — "which sessions" is entirely derived server-side from the
+   * presented token, so this can never be used to target another user's
+   * session, by construction, not by an application-level check. Leaves
+   * the CURRENT session intact (unlike `signOut()` above). */
+  async signOutOtherSessions(): Promise<void> {
+    const { error } = await getSupabaseClient().auth.signOut({ scope: "others" });
+    if (error) throw mapAuthError(error);
+  },
 };

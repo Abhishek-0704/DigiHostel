@@ -16,6 +16,8 @@ import { analyticsRoutes } from "./routes/analytics.js";
 import { reportsRoutes } from "./routes/reports.js";
 import { authRoutes } from "./routes/auth.js";
 import { deviceRoutes } from "./routes/devices.js";
+import { profileRoutes } from "./routes/profile.js";
+import { monitoringRoutes } from "./routes/monitoring.js";
 import { registerAuth, type RegisterAuthOverrides } from "./plugins/auth.js";
 import { registerLeave, type RegisterLeaveOverrides } from "./plugins/leave.js";
 import { registerStudent, type RegisterStudentOverrides } from "./plugins/student.js";
@@ -33,6 +35,8 @@ import { registerReports, type RegisterReportsOverrides } from "./plugins/report
 import { registerRateLimit, type RegisterRateLimitOverrides } from "./plugins/rateLimit.js";
 import { registerOtpAuth, type RegisterOtpAuthOverrides } from "./plugins/otpAuth.js";
 import { registerDevice, type RegisterDeviceOverrides } from "./plugins/device.js";
+import { registerProfile, type RegisterProfileOverrides } from "./plugins/profile.js";
+import { registerMonitoring, type RegisterMonitoringOverrides } from "./plugins/monitoring.js";
 
 /**
  * CORS origin resolution (Reception Dashboard Prompt 1). Returns:
@@ -96,6 +100,12 @@ export interface BuildAppOptions {
   /** Test-only dependency injection — see plugins/reports.ts. Never used in
    * production. */
   reportsOverrides?: RegisterReportsOverrides;
+  /** Test-only dependency injection — see plugins/profile.ts. Never used in
+   * production. */
+  profileOverrides?: RegisterProfileOverrides;
+  /** Test-only dependency injection — see plugins/monitoring.ts. Never used
+   * in production. */
+  monitoringOverrides?: RegisterMonitoringOverrides;
   /** Test-only dependency injection — see plugins/rateLimit.ts. Never used
    * in production. */
   rateLimitOverrides?: RegisterRateLimitOverrides;
@@ -124,6 +134,19 @@ export async function buildApp(options: BuildAppOptions = {}) {
   // sensitive, and requires no new dependency.
   app.addHook("onSend", async (request, reply, payload) => {
     reply.header("x-request-id", request.id);
+    // QG-06 remediation (F-QG06-08) — minimal, safe defense-in-depth headers
+    // for a JSON-only API with no HTML-rendering surface of its own. No CSP
+    // is set here: this endpoint never serves a browsable page, so a
+    // content-security-policy has no meaningful target and risks confusing
+    // an unrelated client expecting none. HSTS is safe to send
+    // unconditionally — browsers only honor it over a response actually
+    // received via HTTPS (true for both Render production traffic and any
+    // reverse-proxied deployment), and it is a no-op, not a breaking change,
+    // for local HTTP development.
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("x-frame-options", "DENY");
+    reply.header("referrer-policy", "no-referrer");
+    reply.header("strict-transport-security", "max-age=15552000; includeSubDomains");
     return payload;
   });
 
@@ -171,6 +194,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
   registerReports(app, options.reportsOverrides);
   registerOtpAuth(app, options.otpAuthOverrides);
   registerDevice(app, options.deviceOverrides);
+  registerProfile(app, options.profileOverrides);
+  // Phase 7, Prompt 18 — Enterprise Operations Monitoring Center. Mirrors
+  // registerReports' own pattern: constructs fresh Analytics/Emergency/
+  // Health/Staff service instances rather than depending on registration
+  // order elsewhere in this function. Reuses the existing `system:view`
+  // permission (super_admin only, granted since Prompt 3) and the existing
+  // AAL2 staff boundary — no new authentication mechanism, role, or
+  // permission was introduced.
+  registerMonitoring(app, options.monitoringOverrides);
 
   await app.register(healthRoutes, { prefix: "/api/v1" });
   // Demonstration/test-only routes (test-auth.ts's own doc comment) — never
@@ -231,6 +263,19 @@ export async function buildApp(options: BuildAppOptions = {}) {
   // registration order relative to authRoutes doesn't matter; placed here to
   // keep every routes/*.ts registration grouped together.
   await app.register(deviceRoutes, { prefix: "/api/v1" });
+  // Phase 7, Prompt 17 — Administrative Profile & Personal Preferences
+  // Center. Self-scoped only: authenticate() + any staff role, no AAL2
+  // requirement (personal, non-privileged preference changes present no
+  // privilege-escalation risk regardless of assurance level) and no
+  // hostel-scope check (there is nothing to scope — every route resolves
+  // exclusively to the caller's own server-resolved staff id, never a
+  // client-supplied one). No new authentication mechanism, role, or
+  // permission was introduced.
+  await app.register(profileRoutes, { prefix: "/api/v1" });
+  // Phase 7, Prompt 18 — Enterprise Operations Monitoring Center. Reuses the
+  // existing `system:view` permission (super_admin only) and AAL2 staff
+  // boundary — no new authentication mechanism, role, or permission.
+  await app.register(monitoringRoutes, { prefix: "/api/v1" });
 
   return app;
 }

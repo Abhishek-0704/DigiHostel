@@ -1570,6 +1570,16 @@ paths:
           schema:
             type: array
             items: { $ref: "#/components/schemas/AuditEntityType" }
+        - name: actorId
+          in: query
+          required: false
+          description: >
+            Phase 7, Prompt 17 — Administrative Profile's "Personal
+            Activity" panel. Applied AFTER the existing hostel-scope check,
+            never in place of it — narrows the caller's own already-scoped
+            view; passing another staff member's id simply returns zero
+            rows if it falls outside the caller's scope, never an error.
+          schema: { type: string, format: uuid }
         - name: dateFrom
           in: query
           required: false
@@ -1744,6 +1754,107 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /monitoring/overview:
+    get:
+      operationId: getMonitoringOverview
+      tags: [monitoring]
+      summary: >
+        super_admin-only: Enterprise Operations Monitoring Center aggregate
+        health view (Phase 7, Prompt 18)
+      description: >
+        Reuses the existing `system:view` permission boundary (granted only
+        to super_admin since Prompt 3) and the existing AAL2 staff boundary.
+        Aggregates real, directly-measured signals (database connectivity,
+        Supabase Auth Admin API reachability, `supabase_realtime`
+        publication membership) with genuine read-only reuse of already-
+        certified domain services (Analytics, Emergency, Health, Staff
+        Administration, Audit) for operational/security indicators. No
+        metric is fabricated: a signal this backend cannot genuinely
+        measure is reported as `unavailable`/`unknown`, never a invented
+        value. See apps/reception-dashboard/docs/monitoring-center.md for
+        the full health model and aggregation rules.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Real, aggregated platform/operational/security health.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonitoringOverview"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /monitoring/diagnostics:
+    get:
+      operationId: listMonitoringDiagnostics
+      tags: [monitoring]
+      summary: >
+        super_admin-only: the fixed, server-owned diagnostic allow-list
+        (Phase 7, Prompt 18)
+      description: >
+        Returns only the diagnostic definitions themselves (id/label/
+        description) — running one is a separate, explicit POST. This
+        allow-list is fixed at the backend; no diagnostic id outside it can
+        ever be executed, regardless of client input.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The fixed diagnostic catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [diagnostics]
+                properties:
+                  diagnostics:
+                    type: array
+                    items: { $ref: "#/components/schemas/DiagnosticDefinition" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /monitoring/diagnostics/{diagnosticId}/run:
+    post:
+      operationId: runMonitoringDiagnostic
+      tags: [monitoring]
+      summary: >
+        super_admin-only: execute one allow-listed, read-only diagnostic
+        check (Phase 7, Prompt 18)
+      description: >
+        `diagnosticId` must be one of the fixed ids returned by
+        GET /monitoring/diagnostics — any other value is rejected with
+        `404`, never executed. Every diagnostic is read-only, bounded by a
+        server-side timeout, and never mutates application or database
+        state. Execution is recorded as one `monitoring.diagnostic_run`
+        row in the existing audit trail (`audit_logs`) — no new audit
+        mechanism.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: diagnosticId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The diagnostic's result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticResult"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unrecognized diagnosticId — not on the fixed allow-list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
 
   /reports/catalog:
     get:
@@ -2605,6 +2716,67 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorBody" }
 
+  /profile:
+    get:
+      operationId: getMyProfile
+      tags: [profile]
+      summary: >
+        Any staff role: the caller's own identity + personal preferences
+        (Phase 7, Prompt 17 — Administrative Profile & Personal Preferences
+        Center)
+      description: >
+        Self-scoped only — the acting staff id is always read from the
+        verified JWT, never a client-supplied field. No AAL2 requirement
+        (personal, non-privileged preference reads) and no hostel scoping.
+        A missing preferences row is transparently created with safe
+        defaults on first access, never causing an error.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The caller's own profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: updateMyProfile
+      tags: [profile]
+      summary: >
+        Any staff role: update permitted fields of the caller's own profile
+        (Phase 7, Prompt 17)
+      description: >
+        A partial update — every field optional. `fullName` writes to the
+        caller's own `staff.full_name` (the pre-existing self-update
+        authority); every other field writes to the caller's own
+        `staff_preferences` row. Role, permissions, hostel assignment,
+        account status, and every other identity/authorization attribute
+        are NOT declared on this schema at all (`additionalProperties:
+        false`) — an attempt to send one is rejected outright with `400`,
+        never silently ignored or applied. A mandatory safety notification
+        category (`emergency_alert`/`health_alert`) cannot be disabled —
+        rejected with `400`.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfileUpdateBody" }
+      responses:
+        "200":
+          description: The updated profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2917,7 +3089,7 @@ components:
       properties:
         event:
           type: string
-          enum: [sign_in_success, mfa_success, mfa_failure, sign_out]
+          enum: [sign_in_success, mfa_success, mfa_failure, sign_out, sessions_signed_out_others]
 
     RequestOtpBody:
       type: object
@@ -4171,6 +4343,265 @@ components:
               invalid_key,
             ]
         reason: { type: string, nullable: true }
+
+    StaffIdentity:
+      type: object
+      description: >
+        Read-only identity fields (Phase 7, Prompt 17) — role, hostel
+        assignment, and account status remain owned by Identity & Access
+        Administration (Prompt 13); this endpoint never accepts a write to
+        any of them.
+      required: [id, fullName, role, hostelId, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        fullName: { type: string }
+        role:
+          type: string
+          enum: [reception_warden, hostel_admin, library_incharge, super_admin]
+        hostelId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [active, suspended] }
+        createdAt: { type: string, format: date-time }
+
+    PersonalShortcut:
+      type: object
+      required: [id, label, path]
+      properties:
+        id: { type: string, maxLength: 100 }
+        label: { type: string, maxLength: 60 }
+        path:
+          type: string
+          maxLength: 200
+          description: A relative in-app path (must start with "/").
+
+    ProfilePreferences:
+      type: object
+      required:
+        [
+          phoneNumber,
+          officeLocation,
+          bio,
+          preferredContactMethod,
+          theme,
+          density,
+          fontScale,
+          dateFormat,
+          reducedMotion,
+          highContrast,
+          defaultLandingPage,
+          notificationPreferences,
+          dashboardPreferences,
+          shortcuts,
+          updatedAt,
+        ]
+      properties:
+        phoneNumber: { type: string, nullable: true }
+        officeLocation: { type: string, nullable: true }
+        bio: { type: string, nullable: true }
+        preferredContactMethod: { type: string, enum: [email, phone, in_app] }
+        theme: { type: string, enum: [light, dark, system] }
+        density: { type: string, enum: [comfortable, compact] }
+        fontScale: { type: string, enum: [default, large, larger] }
+        dateFormat: { type: string, enum: [DD_MM_YYYY, MM_DD_YYYY, YYYY_MM_DD] }
+        reducedMotion: { type: boolean }
+        highContrast: { type: boolean }
+        defaultLandingPage:
+          type: string
+          enum: [dashboard, leave, students, notifications, emergency, health, audit]
+        notificationPreferences:
+          type: object
+          description: >
+            STORED, RUNTIME CONSUMPTION DEFERRED — no staff-facing
+            notification delivery mechanism exists yet in this repository.
+          additionalProperties: { type: boolean }
+        dashboardPreferences:
+          type: object
+          properties:
+            compactMode: { type: boolean }
+            widgetVisibility: { type: object, additionalProperties: { type: boolean } }
+            savedFilters: { type: object, additionalProperties: {} }
+        shortcuts:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/PersonalShortcut" }
+        updatedAt: { type: string, format: date-time }
+
+    Profile:
+      type: object
+      required: [identity, preferences]
+      properties:
+        identity: { $ref: "#/components/schemas/StaffIdentity" }
+        preferences: { $ref: "#/components/schemas/ProfilePreferences" }
+
+    ProfileUpdateBody:
+      type: object
+      description: >
+        Every field optional (partial update). Deliberately does NOT
+        declare role/hostelId/status/id/authUserId/staffId anywhere —
+        `additionalProperties: false` rejects any attempt to send one.
+      additionalProperties: false
+      properties:
+        fullName: { type: string, minLength: 1, maxLength: 200 }
+        phoneNumber: { type: string, maxLength: 30, nullable: true }
+        officeLocation: { type: string, maxLength: 200, nullable: true }
+        bio: { type: string, maxLength: 1000, nullable: true }
+        preferredContactMethod: { type: string, enum: [email, phone, in_app] }
+        theme: { type: string, enum: [light, dark, system] }
+        density: { type: string, enum: [comfortable, compact] }
+        fontScale: { type: string, enum: [default, large, larger] }
+        dateFormat: { type: string, enum: [DD_MM_YYYY, MM_DD_YYYY, YYYY_MM_DD] }
+        reducedMotion: { type: boolean }
+        highContrast: { type: boolean }
+        defaultLandingPage:
+          type: string
+          enum: [dashboard, leave, students, notifications, emergency, health, audit]
+        notificationPreferences:
+          type: object
+          description: >
+            emergency_alert/health_alert cannot be set to false — rejected
+            with 400 (profile_mandatory_notification).
+          additionalProperties: { type: boolean }
+        dashboardPreferences:
+          type: object
+          properties:
+            compactMode: { type: boolean }
+            widgetVisibility: { type: object, additionalProperties: { type: boolean } }
+            savedFilters: { type: object, additionalProperties: {} }
+        shortcuts:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/PersonalShortcut" }
+
+    HealthState:
+      type: string
+      description: >
+        Platform Health Model (Phase 7, Prompt 18). `unknown` is
+        deliberately distinct from `healthy` — a signal this backend could
+        not evaluate must never collapse into an implied-good state.
+      enum: [healthy, warning, degraded, unavailable, unknown]
+
+    HealthSignal:
+      type: object
+      required: [id, label, state, detail, measuredAt]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        state: { $ref: "#/components/schemas/HealthState" }
+        detail: { type: string }
+        measuredAt: { type: string, format: date-time }
+        latencyMs: { type: integer, nullable: true }
+
+    ApplicationModuleStatus:
+      type: object
+      required: [id, label, state, detail]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        state: { $ref: "#/components/schemas/HealthState" }
+        detail: { type: string }
+
+    MonitoringOperationalSummary:
+      type: object
+      required:
+        - pendingLeaveAuthorizations
+        - studentsOutsideHostel
+        - activeEmergencies
+        - criticalEmergencies
+        - activeHealthCases
+        - criticalHealthCases
+        - notificationsFailedLast24h
+        - libraryOperationsStatus
+      properties:
+        pendingLeaveAuthorizations: { type: integer }
+        studentsOutsideHostel: { type: integer }
+        activeEmergencies: { type: integer }
+        criticalEmergencies: { type: integer }
+        activeHealthCases: { type: integer }
+        criticalHealthCases: { type: integer }
+        notificationsFailedLast24h: { type: integer, nullable: true }
+        libraryOperationsStatus:
+          type: string
+          enum: [future]
+
+    MonitoringSecuritySummary:
+      type: object
+      required:
+        - recentMfaFailures24h
+        - suspendedStaffAccounts
+        - recentAdministrativeChanges24h
+      properties:
+        recentMfaFailures24h: { type: integer }
+        suspendedStaffAccounts: { type: integer }
+        recentAdministrativeChanges24h: { type: integer }
+
+    MonitoringDeploymentInfo:
+      type: object
+      required: [version, environment]
+      properties:
+        version: { type: string }
+        environment: { type: string }
+
+    MonitoringAlert:
+      type: object
+      required: [id, severity, title, detail, source]
+      properties:
+        id: { type: string }
+        severity:
+          type: string
+          enum: [informational, warning, critical]
+        title: { type: string }
+        detail: { type: string }
+        source: { type: string }
+
+    MonitoringOverview:
+      type: object
+      required:
+        - generatedAt
+        - platformStatus
+        - infrastructure
+        - applicationModules
+        - operational
+        - security
+        - deployment
+        - alerts
+      properties:
+        generatedAt: { type: string, format: date-time }
+        platformStatus: { $ref: "#/components/schemas/HealthState" }
+        infrastructure:
+          type: array
+          items: { $ref: "#/components/schemas/HealthSignal" }
+        applicationModules:
+          type: array
+          items: { $ref: "#/components/schemas/ApplicationModuleStatus" }
+        operational:
+          $ref: "#/components/schemas/MonitoringOperationalSummary"
+        security:
+          $ref: "#/components/schemas/MonitoringSecuritySummary"
+        deployment:
+          $ref: "#/components/schemas/MonitoringDeploymentInfo"
+        alerts:
+          type: array
+          items: { $ref: "#/components/schemas/MonitoringAlert" }
+
+    DiagnosticDefinition:
+      type: object
+      required: [id, label, description]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        description: { type: string }
+
+    DiagnosticResult:
+      type: object
+      required: [id, label, status, detail, durationMs, executedAt]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        status:
+          type: string
+          enum: [pass, fail, unavailable]
+        detail: { type: string }
+        durationMs: { type: integer }
+        executedAt: { type: string, format: date-time }
 
   responses:
     Unauthenticated:
