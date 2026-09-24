@@ -111,6 +111,23 @@ Verification/evidence: see `docs/adr/ADR-024-reception-dashboard-staff-authentic
 
 ---
 
+## ADR-026 — Interim Production Data-Recovery Risk Acceptance (Partial Supersession of ADR-022)
+
+Date: 2026-09-24
+Status: ACCEPTED
+
+Context: Real production infrastructure now exists (Supabase project `asphlfoikqyaeslmhrah`, Render service `digihostel-api-production`, Vercel production frontend) with a real, independently-verified production administrator — but production PITR remains disabled and managed backups remain absent (`pitr_enabled: false`, `backups: []`, re-verified live). ADR-022 required reaching its Option E (Pro + PITR) target before/at production go-live; that has not happened, and the independent QG-06 certification found this undocumented deviation was the sole remaining go-live blocker (F-QG06-01).
+
+Decision: The project temporarily accepts the absence of managed PITR/backups in the live production environment and defers adopting ADR-022's Option E until the already-approved qualitative scale-up trigger (ADR-022) is reached. ADR-022's target architecture, approved RPO/RTO/retention values (1 hour / 1–4 hours / 7 days), and decision-authority finding (Product Owner) are all unchanged — only the "must reach it before/at go-live" expectation is superseded.
+
+Alternatives considered: leaving the verbal decision undocumented (rejected — indistinguishable from an oversight to a future reader); editing ADR-022 or the SDD in place to remove the PITR requirement (rejected — violates this repository's ADR-immutability and SDD-controlled-document rules).
+
+Consequences: F-QG06-01 remains technically open (CRITICAL, unresolved) but is now governed rather than ambiguous — status "TECHNICALLY UNRESOLVED — RISK ACCEPTED / DEFERRED," not "CLOSED." No code, schema, migration, RLS, or security-control change results from this ADR. A future scale-up review must explicitly reconsider this deferral, not only the numeric DR targets.
+
+Verification/evidence: see `docs/adr/ADR-026-interim-production-recovery-risk-acceptance.md` for the full supersession-scope analysis, risk enumeration, and the exact current recovery-capability assessment (`supabase/scripts/backup.mjs` classified AVAILABLE BUT NOT OPERATIONAL, not a production backup system).
+
+---
+
 Initial known decisions:
 - Use pnpm as the workspace package manager.
 - Keep Supabase architecture.

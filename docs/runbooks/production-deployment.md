@@ -40,6 +40,18 @@ account-owner billing decision) and a production administrator account
 (F-QG06-09, an account-owner action per this project's standing prohibition
 on autonomous account creation).
 
+**Update (2026-09-24):** F-QG06-09 is since **CLOSED** — a real production
+administrator was provisioned via the certified Supabase Auth + `staff`
+row mechanism, with password authentication, native TOTP MFA, AAL2, RBAC,
+and Force Sign-Out all independently verified live against production, the
+last including database-level confirmation. F-QG06-01 remains open — the
+account owner has since explicitly decided to defer Supabase Pro/PITR
+adoption, formally recorded as a governed risk acceptance in
+[ADR-026](../adr/ADR-026-interim-production-recovery-risk-acceptance.md)
+(ACCEPTED, partially superseding ADR-022) rather than left as an
+undocumented gap. Current status: **F-QG06-01 — TECHNICALLY UNRESOLVED —
+RISK ACCEPTED / DEFERRED**, not closed.
+
 ## 1. Prerequisites
 
 - GitHub repository access with permission to configure Actions secrets and
@@ -915,8 +927,8 @@ rather than silently rewritten:
   unaffected by this update.
 - Test B (temporary database interruption) was not exercised against
   production — deferred, not performed merely to check a box, since it
-  would require deliberately degrading a real (if currently userless)
-  production database.
+  would require deliberately degrading a real production database that now
+  holds a real administrator account.
 - Horizontal scaling (multiple concurrent API/worker instances) is
   untested — `numInstances: 1` on both staging and production, deliberate,
   not yet revisited.
@@ -924,7 +936,10 @@ rather than silently rewritten:
   available API token (org-subscription endpoint returns `403`) —
   genuinely unverified, not assumed Free or Pro.
 - Production PITR/backups remain disabled (F-QG06-01) — an account-owner
-  billing decision, explicitly out of this remediation's scope.
+  billing decision, explicitly out of this remediation's scope. Now
+  formally recorded as a governed, time-bounded risk acceptance rather than
+  an undocumented gap — see
+  [ADR-026](../adr/ADR-026-interim-production-recovery-risk-acceptance.md).
 - No production administrator account exists (F-QG06-09) — an
   account-owner action per this project's standing prohibition on
   autonomous account creation, explicitly out of this remediation's scope.

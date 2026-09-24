@@ -1094,6 +1094,17 @@ not the environment this repository currently builds against.
 is the future production/scale-up capability target.** Neither statement
 weakens the other.
 
+**Update (2026-09-24):** this section's original framing ("during the
+current development, testing, and staging phase") predates production
+infrastructure existing. Real production infrastructure now exists
+(`asphlfoikqyaeslmhrah`) and, by explicit decision, is **also** currently
+on Free with no PITR/managed backups — not merely dev/test/staging. See
+[ADR-026](../adr/ADR-026-interim-production-recovery-risk-acceptance.md)
+(ACCEPTED, partially superseding ADR-022) for the formal governance record
+of this extension. The "Production DR target (future capability)" row
+below is unchanged in every value; only the scope of what currently runs
+without it has grown to include production itself.
+
 ## 24. Supabase Free-tier baseline
 
 The figures below were supplied as the current operative baseline for this
