@@ -23,5 +23,5 @@
 
 .timestamp {
   font-size: 12px;
-  color: var(--color-text-disabled);
+  color: var(--color-text-secondary);
 }
