@@ -46,7 +46,7 @@ Do not include or invent checks for Emergency/Health/Analytics/Reporting/Configu
 
 ## Post-Release Cleanup (tracked, not automatic)
 
-- [ ] Delete the disposable `reception_warden` test staff account created during Force Sign-Out verification (Supabase Dashboard → Auth Users → delete the corresponding user, then the `staff` row is removed by its `ON DELETE CASCADE` foreign key — confirm this is the actual constraint behavior before assuming it, or delete the `staff` row explicitly first). **Requires explicit account-owner action — not performed automatically by this checklist or any automated process.**
+- [x] Delete the disposable `reception_warden` test staff account created during Force Sign-Out verification. **Done 2026-09-24, on explicit account-owner instruction.** The actual constraint was verified before deletion, not assumed: `staff.auth_user_id → auth.users(id)` is `ON DELETE NO ACTION`, not cascade — the `staff` row (`Force Signout Test`, id `a0ed4a09-5fc4-4ed6-ba4e-9246cf7b225e`) was deleted explicitly first (after confirming zero referencing rows in every other FK-dependent table), then the corresponding `auth.users` row (`9ffb66f2-7e37-45cc-8859-35cb79151448`) was deleted via the Supabase Auth Admin API. The dependent `staff_preferences` row (which genuinely does have `ON DELETE CASCADE`) was removed automatically. Verified post-deletion: `staff` contains exactly the real `super_admin` account, unaffected; the deleted auth user id returns `404 user_not_found`; production `/healthz`/`/readyz` unaffected.
 
 ## Rollback Quick Reference
 
