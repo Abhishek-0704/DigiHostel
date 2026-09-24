@@ -193,3 +193,15 @@ None for currently-running systems. This ADR does not require, authorize, or per
 ## Rollback
 
 Trivially reversible in the direction that matters: adopting Option E (enabling PITR/backups) at any time supersedes this ADR's deferral without requiring a further governance step beyond the Product Owner's own purchase decision — this ADR does not need to be formally superseded again merely to *close* the deferral, since closing it means the underlying ADR-022 target has finally been reached, which was always the intended end state. This ADR would need formal reconsideration only if the project wished to reject Option E as a future target entirely, which is not what this decision does.
+
+## Addendum: SDD Formally Amended (2026-09-24)
+
+**This addendum is a factual update only. It does not change the Decision, Risk, Mitigations, Future Migration Plan, Recovery Objectives, or any other section above — all unchanged.**
+
+This ADR's own "SDD Relationship" section, as originally written, stated that "no such formal SDD amendment process has been invoked here, and none is invoked by this ADR," and separately noted the deviation "should be reconciled against [a formal amendment process] at that time" if one were ever established.
+
+**Update**: the Product Owner has since explicitly authorized, and this repository's implementation has performed, a direct, formal amendment to the SDD itself — not merely an ADR-level deviation. Sections 12.7 (`sdd/Chapter_12_Database_Design_and_Data_Model_SDD.docx`), 16.7 (`sdd/Chapter_16_Operations_Maintenance_and_Support_SDD.docx`), and 20.4 (`sdd/Chapter_20_Conclusion_Appendices_and_Production_Readiness_SDD.docx`) each now carry a new, clearly-labeled interim subsection/note (§12.7.1, §16.7.1, and an unnumbered note following §20.4's checklist, respectively) stating the Free-tier interim posture, its risks, and the scale-up commitment — appended immediately after each section's original, unedited requirement text, never replacing or rewording it. The original unconditional requirement language remains fully intact and readable in all three chapters; the amendment adds an explicit, scoped, time-bounded exception rather than removing the requirement.
+
+This closes the gap this ADR itself named as unresolved. Reconciliation is complete: the SDD's own text, not only this repository's ADR layer, now explicitly accommodates the interim Free-tier posture this ADR governs.
+
+**This does not change F-QG06-01's technical status** (still `pitr_enabled: false`, `backups: []`) and does not itself constitute a go-live certification — that determination remains the independent QG-06 board's, now informed by the fact that the SDD requirement this finding traces back to has itself been formally, explicitly scoped to accommodate the current interim state.
