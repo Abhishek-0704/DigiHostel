@@ -864,10 +864,31 @@ basis — this is not automated, and no such automatic script was created
 here (this task explicitly forbids automatic destructive rollback tooling).
 
 **For a genuinely destructive mistake** (wrong data deleted/overwritten),
-the recovery mechanism is backup/PITR restoration — see
-`docs/runbooks/disaster-recovery.md`, which is honest that this is
-currently unverified in production because no production project exists
-(F-04, explicitly out of this task's scope to re-address).
+the recovery mechanism would be backup/PITR restoration — see
+`docs/runbooks/disaster-recovery.md`.
+
+**Update (Prompt 20, release packaging, 2026-09-24) — recovery-risk
+limitation, finalized.** The claim above ("currently unverified... because
+no production project exists") is now stale and corrected: a real
+production Supabase project (`asphlfoikqyaeslmhrah`) exists, and has
+existed since the QG-06 production-infrastructure remediation. The current,
+accurate state is: **production has no managed backup or PITR capability
+of any kind, by explicit, governed decision, not by absence of
+infrastructure.** [ADR-026](../adr/ADR-026-interim-production-recovery-risk-acceptance.md)
+(ACCEPTED, partially superseding ADR-022) formally records this as a
+time-bounded risk acceptance, and the SDD itself has been amended
+accordingly (Ch.12 §12.7.1, Ch.16 §16.7.1, Ch.20 §20.4 — see ADR-026's own
+"Addendum: SDD Formally Amended"). **This release checklist does not, and
+must not, claim that a destructive-mistake recovery path exists.** It does
+not. Rollback here means application/deployment rollback only (above) — it
+does not extend to data recovery.
+
+Render's own instant-rollback-to-previous-deploy capability (§Application
+rollback above) now has a second, genuinely distinct production commit in
+its history (`75dcc49` → `5bf4be2`, both real production deploys) — the
+next genuine production release is a reasonable, low-risk opportunity to
+finally exercise this capability for real rather than continuing to defer
+it, since a real prior commit now exists to roll back to.
 
 ## 16. Emergency Procedure
 
