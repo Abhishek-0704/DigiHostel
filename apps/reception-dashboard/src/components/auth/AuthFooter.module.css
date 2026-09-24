@@ -6,7 +6,7 @@
   flex-direction: column;
   gap: var(--spacing-xs);
   font-size: 11px;
-  color: var(--color-text-disabled);
+  color: var(--color-text-secondary);
 }
 
 .row {

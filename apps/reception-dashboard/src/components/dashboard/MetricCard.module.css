@@ -62,7 +62,7 @@ button.actionable:focus-visible {
 
 .unavailable {
   font-size: 13px;
-  color: var(--color-text-disabled);
+  color: var(--color-text-secondary);
 }
 
 .unavailable span[aria-hidden] {

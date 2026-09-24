@@ -71,7 +71,7 @@
 
 .timestamp {
   font-size: 12px;
-  color: var(--color-text-disabled);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
 }
 
@@ -92,5 +92,5 @@
 
 .source {
   font-size: 12px;
-  color: var(--color-text-disabled);
+  color: var(--color-text-secondary);
 }
